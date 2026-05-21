@@ -1,0 +1,120 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+  }
+
+  html, body, #root {
+    height: 100%;
+    background: #06080b;
+  }
+
+  body {
+    @apply bg-ink-950 text-fg font-sans antialiased;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+
+  /* Numeric inputs: hide native spinner, present cleanly */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+
+  /* Reduce motion */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+
+  /* Mono for numeric tabular data */
+  .num {
+    @apply font-mono tabular-nums;
+  }
+
+  /* Hide scrollbars on horizontal tab strips */
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* Focus ring */
+  :where(button, [role='button'], a, input, select, textarea):focus-visible {
+    @apply outline-none ring-2 ring-accent-ring ring-offset-2 ring-offset-ink-950;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-ink-850 border border-line rounded-2xl shadow-card;
+  }
+  .card-flat {
+    @apply bg-ink-850 border border-line rounded-2xl;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium border;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 select-none font-medium rounded-xl
+           transition-[transform,background,color,box-shadow] active:scale-[0.98]
+           disabled:opacity-40 disabled:pointer-events-none;
+    min-height: 44px;
+    padding-inline: 1rem;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-ink-950 hover:bg-accent-hover shadow-soft;
+  }
+  .btn-ghost {
+    @apply btn bg-ink-800 text-fg hover:bg-ink-700 border border-line;
+  }
+  .btn-subtle {
+    @apply btn text-fg-muted hover:text-fg hover:bg-ink-800;
+  }
+  .btn-icon {
+    @apply inline-flex items-center justify-center rounded-xl text-fg-muted hover:text-fg
+           hover:bg-ink-800 transition-colors;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .input {
+    @apply w-full bg-ink-900 border border-line rounded-xl px-3 py-2.5 text-fg
+           placeholder:text-fg-ghost focus:border-accent transition-colors;
+    min-height: 44px;
+  }
+  .label {
+    @apply text-xs font-medium text-fg-muted mb-1.5 block;
+  }
+  .divider {
+    @apply h-px bg-line my-3;
+  }
+  .pill-tab {
+    @apply px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap
+           text-fg-muted hover:text-fg transition-colors border border-transparent;
+  }
+  .pill-tab[data-active='true'] {
+    @apply bg-accent text-ink-950 border-accent;
+  }
+  .safe-top { padding-top: calc(0.5rem + var(--safe-top)); }
+  .safe-bottom { padding-bottom: calc(0.5rem + var(--safe-bottom)); }
+  .pb-tabbar { padding-bottom: calc(72px + var(--safe-bottom)); }
+}
+
+/* Recharts text in RTL */
+.recharts-wrapper { direction: ltr; }
+.recharts-cartesian-axis-tick text { fill: #9aa3ad; font-size: 11px; }
+.recharts-cartesian-grid line { stroke: #1e232a; }
+.recharts-tooltip-wrapper { direction: rtl; }
