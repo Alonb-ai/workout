@@ -30,22 +30,46 @@ export function Modal({
 }: ModalProps) {
   const ref = useRef<HTMLDivElement>(null);
 
+  // Body-scroll lock — depends only on `open` so it doesn't churn on parent re-render.
   useEffect(() => {
     if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !hideClose) onClose();
-    };
-    document.addEventListener('keydown', handler);
-    // focus the dialog
-    queueMicrotask(() => ref.current?.focus());
-    // lock body scroll
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
-      document.removeEventListener('keydown', handler);
       document.body.style.overflow = prev;
     };
-  }, [open, onClose, hideClose]);
+  }, [open]);
+
+  // ESC-to-close. The handler reads the latest `onClose`/`hideClose` via a ref
+  // so we can keep this effect dependent only on `open` — otherwise every
+  // inline-arrow `onClose` from the parent would re-bind keydown AND retrigger
+  // the focus effect below, stealing focus from any open <input> on every
+  // keystroke (mobile keyboard would close after each letter).
+  const closeRef = useRef(onClose);
+  const hideRef = useRef(hideClose);
+  closeRef.current = onClose;
+  hideRef.current = hideClose;
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !hideRef.current) closeRef.current();
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [open]);
+
+  // Initial focus — only when the dialog actually opens, and only if focus
+  // isn't already inside the dialog. This protects any focused <input>.
+  useEffect(() => {
+    if (!open) return;
+    queueMicrotask(() => {
+      const node = ref.current;
+      if (!node) return;
+      const active = document.activeElement;
+      if (active && node.contains(active)) return;
+      node.focus();
+    });
+  }, [open]);
 
   const maxW = size === 'sm' ? 'max-w-sm' : size === 'lg' ? 'max-w-2xl' : 'max-w-lg';
 
