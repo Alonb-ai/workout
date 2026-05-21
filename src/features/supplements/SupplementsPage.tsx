@@ -21,7 +21,7 @@ import type { Supplement, SupplementLog } from '@/types';
 import { toast } from '@/store/toast';
 import { confirmDialog } from '@/components/Confirm';
 import { useSettings, updateSettings } from '@/hooks/useSettings';
-import { useRequestNotificationPermission, useNotificationPermission } from '@/hooks/useNotifications';
+import { useRequestNotificationPermission, useNotificationPermission, usePlatformInfo } from '@/hooks/useNotifications';
 import { computeAdherence } from './adherence';
 import {
   LineChart,
@@ -42,6 +42,8 @@ export function SupplementsPage() {
   const settings = useSettings();
   const permission = useNotificationPermission();
   const requestPerm = useRequestNotificationPermission();
+  const platform = usePlatformInfo();
+  const iosNeedsInstall = permission === 'unsupported' && platform.isIOS && !platform.isStandalone;
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [draft, setDraft] = useState<Supplement | null>(null);
@@ -151,40 +153,58 @@ export function SupplementsPage() {
       </header>
 
       {/* Notifications card */}
-      <div className="card p-3 mb-4 flex items-center gap-3">
-        <span
-          className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-            settings.notificationsEnabled && permission === 'granted'
-              ? 'bg-good text-ink-950'
-              : 'bg-ink-700 text-fg-muted'
-          }`}
-        >
-          <IconBell />
-        </span>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold">תזכורות לפי שעה</p>
-          <p className="text-2xs text-fg-muted">
-            {permission === 'unsupported'
-              ? 'הדפדפן לא תומך — התראות זמינות רק ב-PWA מותקנת.'
-              : settings.notificationsEnabled && permission === 'granted'
-                ? 'פעיל. ב-iOS דרושה התקנה כ-PWA למסך הבית.'
-                : permission === 'denied'
-                  ? 'ההרשאה נחסמה. שנו את הרשאות הדפדפן ידנית.'
-                  : 'לא פעיל. הפעלת התראות תאפשר תזכורות בשעות שנקבעו.'}
-          </p>
-        </div>
-        {permission === 'granted' && settings.notificationsEnabled ? (
-          <button className="btn-ghost !min-h-9 !px-2 text-xs" onClick={disableNotifications}>
-            כבה
-          </button>
-        ) : (
-          <button
-            className="btn-primary !min-h-9 !px-2 text-xs"
-            onClick={enableNotifications}
-            disabled={permission === 'denied' || permission === 'unsupported'}
+      <div className="card p-3 mb-4">
+        <div className="flex items-center gap-3">
+          <span
+            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+              settings.notificationsEnabled && permission === 'granted'
+                ? 'bg-good text-ink-950'
+                : 'bg-ink-700 text-fg-muted'
+            }`}
           >
-            הפעל
-          </button>
+            <IconBell />
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">תזכורות לפי שעה</p>
+            <p className="text-2xs text-fg-muted">
+              {iosNeedsInstall
+                ? 'באייפון צריך להתקין את האפליקציה למסך הבית כדי לקבל התראות.'
+                : permission === 'unsupported'
+                  ? 'הדפדפן הזה לא תומך בהתראות. נסו דפדפן עדכני.'
+                  : settings.notificationsEnabled && permission === 'granted'
+                    ? 'פעיל. ב-iOS דרושה התקנה כ-PWA למסך הבית.'
+                    : permission === 'denied'
+                      ? 'ההרשאה נחסמה. יש לשנות ידנית בהגדרות הדפדפן.'
+                      : 'לא פעיל. הפעלת התראות תשלח תזכורות בשעות שנקבעו.'}
+            </p>
+          </div>
+          {permission === 'granted' && settings.notificationsEnabled ? (
+            <button className="btn-ghost !min-h-9 !px-2 text-xs" onClick={disableNotifications}>
+              כבה
+            </button>
+          ) : (
+            <button
+              className="btn-primary !min-h-9 !px-2 text-xs"
+              onClick={enableNotifications}
+              disabled={permission === 'denied' || permission === 'unsupported'}
+            >
+              הפעל
+            </button>
+          )}
+        </div>
+
+        {iosNeedsInstall && (
+          <div className="mt-3 pt-3 border-t border-line text-xs text-fg-muted space-y-1.5">
+            <p className="font-semibold text-fg">איך מתקינים באייפון:</p>
+            <ol className="list-decimal pr-4 space-y-1">
+              <li>פותחים את האתר ב-Safari (חייב Safari, לא כרום).</li>
+              <li>לוחצים על אייקון השיתוף ⬆️ (בתחתית).</li>
+              <li>בוחרים "הוסף למסך הבית" / "Add to Home Screen".</li>
+              <li>פותחים את האפליקציה מהאייקון החדש במסך הבית.</li>
+              <li>חוזרים לכאן ולוחצים "הפעל".</li>
+            </ol>
+            <p className="pt-1">דרוש iOS 16.4 ומעלה.</p>
+          </div>
         )}
       </div>
 

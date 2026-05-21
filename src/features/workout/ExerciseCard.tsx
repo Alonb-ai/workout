@@ -33,6 +33,8 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
   const [editTargetOpen, setEditTargetOpen] = useState(false);
   const [editBarOpen, setEditBarOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameDraft, setRenameDraft] = useState('');
 
   const startTimer = useTimerStore((s) => s.start);
   const setActiveExercise = useWorkoutSessionStore((s) => s.setActiveExercise);
@@ -200,6 +202,18 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
 
       <Modal open={menuOpen} onClose={() => setMenuOpen(false)} title="פעולות תרגיל">
         <ul className="divide-y divide-line">
+          <li>
+            <button
+              className="w-full text-right py-3 px-1 hover:bg-ink-800 rounded-lg"
+              onClick={() => {
+                setRenameDraft(draft.exerciseName);
+                setMenuOpen(false);
+                setRenameOpen(true);
+              }}
+            >
+              שנה שם תרגיל
+            </button>
+          </li>
           <li>
             <button
               className="w-full text-right py-3 px-1 hover:bg-ink-800 rounded-lg"
@@ -400,6 +414,67 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
           value={draft.notes ?? ''}
           onChange={(e) => onChange({ ...draft, notes: e.target.value })}
         />
+      </Modal>
+
+      <Modal
+        open={renameOpen}
+        onClose={() => setRenameOpen(false)}
+        title="שינוי שם תרגיל"
+        footer={
+          <>
+            <button className="btn-ghost" onClick={() => setRenameOpen(false)}>
+              ביטול
+            </button>
+            <button
+              className="btn-primary"
+              onClick={async () => {
+                const next = renameDraft.trim();
+                if (!next || next === draft.exerciseName) {
+                  setRenameOpen(false);
+                  return;
+                }
+                // Update the source exercise so future sessions use the new name.
+                await db.exercises.update(draft.exerciseId, {
+                  name: next,
+                  updatedAt: Date.now(),
+                });
+                // Update the in-memory draft so the current session reflects it.
+                onChange({ ...draft, exerciseName: next });
+                setRenameOpen(false);
+              }}
+            >
+              <IconCheck size={16} /> שמור
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-2">
+          <label className="label">שם חדש</label>
+          <input
+            className="input"
+            autoFocus
+            value={renameDraft}
+            onChange={(e) => setRenameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                (e.target as HTMLInputElement).blur();
+                const next = renameDraft.trim();
+                if (next && next !== draft.exerciseName) {
+                  void db.exercises.update(draft.exerciseId, {
+                    name: next,
+                    updatedAt: Date.now(),
+                  });
+                  onChange({ ...draft, exerciseName: next });
+                }
+                setRenameOpen(false);
+              }
+            }}
+          />
+          <p className="text-2xs text-fg-muted">
+            השם מתעדכן בתרגיל המקור — אימונים עתידיים ישתמשו בשם החדש. אימונים שכבר נשמרו
+            ממשיכים להציג את השם הישן.
+          </p>
+        </div>
       </Modal>
 
       <AnimatePresence>
