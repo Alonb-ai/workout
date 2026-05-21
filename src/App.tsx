@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 import { ToastHost } from './components/ToastHost';
 import { ConfirmProvider } from './components/Confirm';
@@ -39,7 +39,7 @@ export function App() {
   }
 
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route element={<AppShell />}>
           <Route index element={<DashboardPage />} />
@@ -55,6 +55,6 @@ export function App() {
       </Routes>
       <ToastHost />
       <ConfirmProvider />
-    </BrowserRouter>
+    </HashRouter>
   );
 }
