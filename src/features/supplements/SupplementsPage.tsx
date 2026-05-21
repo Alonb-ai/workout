@@ -5,7 +5,10 @@ import { Section } from '@/components/Section';
 import { EmptyState } from '@/components/EmptyState';
 import { Modal } from '@/components/Modal';
 import {
+  IconArrowLeft,
+  IconArrowRight,
   IconBell,
+  IconCalendar,
   IconCheck,
   IconClock,
   IconEdit,
@@ -15,8 +18,9 @@ import {
   IconX,
 } from '@/components/Icon';
 import { NumberInput } from '@/components/NumberInput';
-import { useTodaySupplements } from './useTodaySupplements';
-import { todayISO, formatHebDateFull, DAYS_HE_SHORT } from '@/utils/dates';
+import { useDaySupplements } from './useTodaySupplements';
+import { todayISO, formatHebDateFull, formatHebDate, DAYS_HE_SHORT } from '@/utils/dates';
+import { addDays, format, isAfter, parseISO } from 'date-fns';
 import type { Supplement, SupplementLog } from '@/types';
 import { toast } from '@/store/toast';
 import { confirmDialog } from '@/components/Confirm';
@@ -37,8 +41,10 @@ const DEFAULT_COLORS = ['#ff7a1a', '#6ec1ff', '#3ddc84', '#ffd166', '#ff5c6c', '
 
 export function SupplementsPage() {
   const today = todayISO();
+  const [viewDate, setViewDate] = useState<string>(today);
+  const isToday = viewDate === today;
   const sups = useLiveQuery(() => db.supplements.orderBy('order').toArray(), []) ?? [];
-  const rows = useTodaySupplements();
+  const rows = useDaySupplements(viewDate);
   const settings = useSettings();
   const permission = useNotificationPermission();
   const requestPerm = useRequestNotificationPermission();
@@ -47,6 +53,13 @@ export function SupplementsPage() {
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [draft, setDraft] = useState<Supplement | null>(null);
+
+  const shiftDate = (delta: number) => {
+    const next = format(addDays(parseISO(viewDate), delta), 'yyyy-MM-dd');
+    // Don't allow navigating into the future.
+    if (isAfter(parseISO(next), parseISO(today))) return;
+    setViewDate(next);
+  };
 
   // Adherence over last 30 days
   const adherence = useLiveQuery(async () => {
@@ -102,7 +115,7 @@ export function SupplementsPage() {
   ) => {
     const existing = await db.supplementLogs
       .where('[supplementId+date]')
-      .equals([supplementId, today])
+      .equals([supplementId, viewDate])
       .toArray();
     const match = existing.find((l) => l.scheduledTime === scheduledTime);
     if (match) {
@@ -114,13 +127,22 @@ export function SupplementsPage() {
       const log: SupplementLog = {
         id: newId(),
         supplementId,
-        date: today,
+        date: viewDate,
         scheduledTime,
         status,
         ...(status === 'taken' ? { takenAt: Date.now() } : {}),
       };
       await db.supplementLogs.add(log);
     }
+  };
+
+  const onClearLog = async (supplementId: string, scheduledTime: string) => {
+    const existing = await db.supplementLogs
+      .where('[supplementId+date]')
+      .equals([supplementId, viewDate])
+      .toArray();
+    const match = existing.find((l) => l.scheduledTime === scheduledTime);
+    if (match) await db.supplementLogs.delete(match.id);
   };
 
   const enableNotifications = async () => {
@@ -151,6 +173,48 @@ export function SupplementsPage() {
           <IconPlus size={14} /> תוסף
         </button>
       </header>
+
+      {/* Day navigator: lets you browse past days and back-fill missed doses. */}
+      <div className="card p-2 mb-3 flex items-center gap-2">
+        <button
+          className="btn-icon !min-w-9 !min-h-9"
+          onClick={() => shiftDate(-1)}
+          aria-label="יום קודם"
+        >
+          <IconArrowRight size={18} />
+        </button>
+        <button
+          className="flex-1 min-w-0 px-2 py-1.5 text-sm font-semibold flex items-center justify-center gap-2"
+          onClick={() => setViewDate(today)}
+          title={isToday ? '' : 'חזור להיום'}
+        >
+          <IconCalendar size={14} className="text-fg-muted" />
+          <span className="truncate">{formatHebDate(viewDate)}</span>
+          {!isToday && (
+            <span className="chip border-line text-fg-muted text-2xs">חזור להיום</span>
+          )}
+        </button>
+        <input
+          type="date"
+          className="bg-transparent text-xs text-fg-muted border-0 outline-none num"
+          value={viewDate}
+          max={today}
+          onChange={(e) => {
+            if (!e.target.value) return;
+            if (isAfter(parseISO(e.target.value), parseISO(today))) return;
+            setViewDate(e.target.value);
+          }}
+          aria-label="בחירת תאריך"
+        />
+        <button
+          className="btn-icon !min-w-9 !min-h-9 disabled:opacity-30"
+          onClick={() => shiftDate(1)}
+          disabled={isToday}
+          aria-label="יום הבא"
+        >
+          <IconArrowLeft size={18} />
+        </button>
+      </div>
 
       {/* Notifications card */}
       <div className="card p-3 mb-4">
@@ -208,14 +272,17 @@ export function SupplementsPage() {
         )}
       </div>
 
-      <Section title="היום" description="לוח הזמנים של המנות להיום">
+      <Section
+        title={isToday ? 'היום' : formatHebDate(viewDate)}
+        description={isToday ? 'לוח הזמנים של המנות להיום' : 'סימון רטרואקטיבי של מנות שכבר נלקחו'}
+      >
         {rows.length === 0 ? (
           <EmptyState
-            title="אין תוספים פעילים להיום"
+            title={isToday ? 'אין תוספים פעילים להיום' : 'אין תוספים פעילים לתאריך זה'}
             description={
               sups.length === 0
                 ? 'הוסיפו תוסף ראשון כדי להתחיל.'
-                : 'התוספים שלכם לא מתוזמנים להיום (יום ראשון/שני/...).'
+                : `התוספים שלכם לא מתוזמנים ל${isToday ? 'היום' : 'יום זה'} (יום ראשון/שני/...).`
             }
             icon={<IconPill />}
             action={
@@ -249,13 +316,15 @@ export function SupplementsPage() {
                   <IconClock size={12} /> {row.scheduledTime}
                 </span>
                 {row.log?.status === 'taken' ? (
-                  <button
-                    className="btn !min-h-9 !px-2 text-2xs bg-good text-ink-950"
-                    aria-label="בטל סימון נלקח"
-                    onClick={() => onLog(row.supplement.id, row.scheduledTime, 'skipped')}
-                  >
-                    <IconCheck size={14} />
-                  </button>
+                  <>
+                    <button
+                      className="btn !min-h-9 !px-2 text-2xs bg-good text-ink-950"
+                      aria-label="נלקח · לחיצה ארוכה לאיפוס"
+                      onClick={() => onClearLog(row.supplement.id, row.scheduledTime)}
+                    >
+                      <IconCheck size={14} />
+                    </button>
+                  </>
                 ) : row.log?.status === 'skipped' ? (
                   <>
                     <button
@@ -267,14 +336,8 @@ export function SupplementsPage() {
                     </button>
                     <button
                       className="btn-icon !min-w-9 !min-h-9 text-bad"
-                      aria-label="בטל"
-                      onClick={async () => {
-                        const log = await db.supplementLogs
-                          .where('[supplementId+date]')
-                          .equals([row.supplement.id, today])
-                          .first();
-                        if (log) await db.supplementLogs.delete(log.id);
-                      }}
+                      aria-label="אפס סימון"
+                      onClick={() => onClearLog(row.supplement.id, row.scheduledTime)}
                     >
                       <IconX size={16} />
                     </button>

@@ -1,7 +1,8 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/db';
 import { todayISO } from '@/utils/dates';
-import type { Supplement, SupplementLog } from '@/types';
+import { parseISO } from 'date-fns';
+import type { ISODate, Supplement, SupplementLog } from '@/types';
 
 export interface TodayRow {
   supplement: Supplement;
@@ -9,11 +10,14 @@ export interface TodayRow {
   log?: SupplementLog;
 }
 
-/** Build today's supplement timeline rows (one per scheduled dose). */
-export function useTodaySupplements(): TodayRow[] {
+/**
+ * Build a supplement timeline for the given date. Defaults to today.
+ * - Filters by each supplement's day-of-week schedule for the given date.
+ * - Attaches any matching log entry (taken/skipped) for the date.
+ */
+export function useDaySupplements(date: ISODate = todayISO()): TodayRow[] {
   const data = useLiveQuery(async () => {
-    const date = todayISO();
-    const dow = new Date().getDay();
+    const dow = parseISO(date).getDay();
     const sups = await db.supplements.filter((s) => s.active).sortBy('order');
     const logs = await db.supplementLogs.where('date').equals(date).toArray();
     const rows: TodayRow[] = [];
@@ -26,6 +30,9 @@ export function useTodaySupplements(): TodayRow[] {
     }
     rows.sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime));
     return rows;
-  }, []);
+  }, [date]);
   return data ?? [];
 }
+
+/** Back-compat alias. */
+export const useTodaySupplements = (): TodayRow[] => useDaySupplements();

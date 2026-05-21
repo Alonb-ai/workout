@@ -35,6 +35,7 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
   const [notesOpen, setNotesOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
+  const [renamePersist, setRenamePersist] = useState(false);
 
   const startTimer = useTimerStore((s) => s.start);
   const setActiveExercise = useWorkoutSessionStore((s) => s.setActiveExercise);
@@ -207,6 +208,7 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
               className="w-full text-right py-3 px-1 hover:bg-ink-800 rounded-lg"
               onClick={() => {
                 setRenameDraft(draft.exerciseName);
+                setRenamePersist(false);
                 setMenuOpen(false);
                 setRenameOpen(true);
               }}
@@ -433,12 +435,15 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
                   setRenameOpen(false);
                   return;
                 }
-                // Update the source exercise so future sessions use the new name.
-                await db.exercises.update(draft.exerciseId, {
-                  name: next,
-                  updatedAt: Date.now(),
-                });
-                // Update the in-memory draft so the current session reflects it.
+                if (renamePersist) {
+                  // Update the source exercise → future sessions use the new name.
+                  await db.exercises.update(draft.exerciseId, {
+                    name: next,
+                    updatedAt: Date.now(),
+                  });
+                }
+                // Always update the in-memory draft → reflected immediately and
+                // snapshotted onto the session log when saved.
                 onChange({ ...draft, exerciseName: next });
                 setRenameOpen(false);
               }}
@@ -448,31 +453,33 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
           </>
         }
       >
-        <div className="space-y-2">
-          <label className="label">שם חדש</label>
-          <input
-            className="input"
-            autoFocus
-            value={renameDraft}
-            onChange={(e) => setRenameDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                (e.target as HTMLInputElement).blur();
-                const next = renameDraft.trim();
-                if (next && next !== draft.exerciseName) {
-                  void db.exercises.update(draft.exerciseId, {
-                    name: next,
-                    updatedAt: Date.now(),
-                  });
-                  onChange({ ...draft, exerciseName: next });
-                }
-                setRenameOpen(false);
-              }
-            }}
-          />
+        <div className="space-y-3">
+          <div>
+            <label className="label">שם חדש</label>
+            <input
+              className="input"
+              autoFocus
+              value={renameDraft}
+              onChange={(e) => setRenameDraft(e.target.value)}
+            />
+          </div>
+          <label className="flex items-start gap-2 text-sm bg-ink-900 rounded-xl p-3 border border-line cursor-pointer">
+            <input
+              type="checkbox"
+              className="w-5 h-5 accent-orange-500 mt-0.5 shrink-0"
+              checked={renamePersist}
+              onChange={(e) => setRenamePersist(e.target.checked)}
+            />
+            <span>
+              <span className="font-semibold">החל גם על אימונים הבאים</span>
+              <span className="block text-2xs text-fg-muted mt-0.5">
+                אם לא תסמן — השם החדש יחול רק על האימון הזה. תרגיל המקור ושמות תרגילים
+                באימונים הבאים יישארו ללא שינוי.
+              </span>
+            </span>
+          </label>
           <p className="text-2xs text-fg-muted">
-            השם מתעדכן בתרגיל המקור — אימונים עתידיים ישתמשו בשם החדש. אימונים שכבר נשמרו
-            ממשיכים להציג את השם הישן.
+            אימונים שכבר נשמרו לא מושפעים בכל מקרה (שומרים תמיד את השם שהיה בעת השמירה).
           </p>
         </div>
       </Modal>
