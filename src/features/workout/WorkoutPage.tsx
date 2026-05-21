@@ -9,11 +9,13 @@ import {
   IconBarbell,
   IconCalendar,
   IconCheck,
+  IconPlus,
   IconRefresh,
   IconTrophy,
   IconWarn,
 } from '@/components/Icon';
 import { ExerciseCard } from './ExerciseCard';
+import { AddExerciseModal } from './AddExerciseModal';
 import type { DraftExercise } from './types';
 import {
   buildDraftFromWorkout,
@@ -69,6 +71,7 @@ export function WorkoutPage() {
   const [loading, setLoading] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [confirmIncompleteOpen, setConfirmIncompleteOpen] = useState(false);
+  const [addExerciseOpen, setAddExerciseOpen] = useState(false);
   const [scoreModalOpen, setScoreModalOpen] = useState(false);
   const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
   const startedAtRef = useRef<number>(Date.now());
@@ -251,6 +254,13 @@ export function WorkoutPage() {
                 />
               ))}
             </AnimatePresence>
+            <button
+              type="button"
+              onClick={() => setAddExerciseOpen(true)}
+              className="w-full card-flat border-dashed py-3 text-sm font-semibold text-fg-muted hover:text-accent hover:border-accent transition-colors flex items-center justify-center gap-1.5"
+            >
+              <IconPlus size={16} /> הוסף תרגיל לאימון
+            </button>
           </div>
         </Section>
       )}
@@ -326,6 +336,20 @@ export function WorkoutPage() {
           </ul>
         </div>
       </Modal>
+
+      {/* Add exercise to active session */}
+      {selectedWorkoutId && (
+        <AddExerciseModal
+          open={addExerciseOpen}
+          onClose={() => setAddExerciseOpen(false)}
+          workoutId={selectedWorkoutId}
+          existingDraftExerciseIds={new Set(drafts.map((d) => d.exerciseId))}
+          onAdd={(newDraft) => {
+            // Append to the end so the new exercise shows up after the existing list.
+            setDrafts((cur) => [...cur, { ...newDraft, order: cur.length }]);
+          }}
+        />
+      )}
 
       {/* Post-save: score modal */}
       <Modal
