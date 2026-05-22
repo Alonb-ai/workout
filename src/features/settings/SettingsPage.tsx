@@ -280,6 +280,68 @@ export function SettingsPage() {
         </div>
       </Section>
 
+      <Section
+        title="פוש לרקע (Cloudflare Worker)"
+        description="התראות אמיתיות שמגיעות גם כשהאפליקציה סגורה לחלוטין. נדרשת התקנת Worker ב-Cloudflare — ראו worker/README.md."
+      >
+        <div className="card p-3 space-y-3">
+          <div>
+            <label className="label">Backend URL</label>
+            <input
+              className="input text-xs num"
+              placeholder="https://iron-track-push.<subdomain>.workers.dev"
+              value={settings.pushBackendUrl ?? ''}
+              onChange={(e) => updateSettings({ pushBackendUrl: e.target.value.trim() })}
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </div>
+          <div>
+            <label className="label">VAPID Public Key</label>
+            <input
+              className="input text-xs num"
+              placeholder="הדבק כאן את המפתח שהדפיס scripts/generateVapid.ts"
+              value={settings.pushVapidPublicKey ?? ''}
+              onChange={(e) => updateSettings({ pushVapidPublicKey: e.target.value.trim() })}
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </div>
+          <div>
+            <label className="label">Shared Secret (אופציונלי)</label>
+            <input
+              className="input text-xs num"
+              placeholder="רק אם הגדרתם SHARED_SECRET ב-Worker"
+              value={settings.pushSharedSecret ?? ''}
+              onChange={(e) => updateSettings({ pushSharedSecret: e.target.value.trim() })}
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </div>
+          <div className="text-2xs text-fg-muted bg-ink-900 rounded-xl p-2.5 border border-line space-y-1">
+            <p>
+              <strong className="text-fg">סטטוס:</strong>{' '}
+              {settings.pushSubscribed ? (
+                <span className="text-good">פעיל</span>
+              ) : (
+                <span className="text-fg-muted">לא פעיל</span>
+              )}
+              {settings.pushLastSyncAt ? (
+                <span className="ms-2 text-fg-muted">
+                  · עודכן: {new Date(settings.pushLastSyncAt).toLocaleString('he-IL')}
+                </span>
+              ) : null}
+            </p>
+            <p>
+              ההפעלה והבדיקה עצמן מתבצעות מעמוד התוספים → כפתור "הפעל פוש לרקע".
+            </p>
+          </div>
+        </div>
+      </Section>
+
       <Section title="גיבוי ונתונים">
         <div className="card p-3 space-y-2">
           <button className="btn-ghost w-full" onClick={onExport}>

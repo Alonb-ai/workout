@@ -1,0 +1,26 @@
+name = "iron-track-push"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+# KV namespace stores one entry per push subscription.
+# Create with: npx wrangler kv namespace create iron_track_subs
+# Then paste the printed `id` here.
+[[kv_namespaces]]
+binding = "SUBS"
+id = "REPLACE_ME_WITH_KV_NAMESPACE_ID"
+
+# Cron: run every minute, scan all subscriptions, fire notifications
+# whose scheduled time matches the current local time.
+[triggers]
+crons = ["* * * * *"]
+
+# Optional: protect the /subscribe endpoint with a shared secret so a random
+# stranger can't enroll someone into your push schedule. Set with:
+#   npx wrangler secret put SHARED_SECRET
+# and put the same value in the Iron Track settings.
+
+# VAPID keys (set via secrets — never commit them):
+#   npx wrangler secret put VAPID_PUBLIC_KEY
+#   npx wrangler secret put VAPID_PRIVATE_KEY
+#   npx wrangler secret put VAPID_SUBJECT   (e.g. mailto:you@example.com)

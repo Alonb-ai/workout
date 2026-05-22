@@ -11,6 +11,7 @@ import { SupplementsPage } from './features/supplements/SupplementsPage';
 import { ProgressPage } from './features/progress/ProgressPage';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { startSupplementScheduler } from './features/supplements/scheduler';
+import { attachSubscriptionRenewer } from './features/push/webPush';
 import { SessionDetailPage } from './features/progress/SessionDetailPage';
 import { ExerciseHistoryPage } from './features/workout/ExerciseHistoryPage';
 
@@ -24,6 +25,8 @@ export function App() {
       setReady(true);
       // Start in-app supplement scheduler (also handles delivering notifications).
       startSupplementScheduler();
+      // Listen for SW-relayed pushsubscriptionchange and auto-resubscribe.
+      attachSubscriptionRenewer();
     })();
   }, []);
 

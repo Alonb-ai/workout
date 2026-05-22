@@ -171,7 +171,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   restTimerSound: true,
   dismissedStalls: {},
   seeded: false,
-  schemaVersion: 1,
+  schemaVersion: 2,
+  pushBackendUrl: '',
+  pushVapidPublicKey: '',
+  pushSharedSecret: '',
+  pushClientId: '',
+  pushSubscribed: false,
+  pushLastSyncAt: 0,
 };
 
 export async function seedIfNeeded(): Promise<void> {

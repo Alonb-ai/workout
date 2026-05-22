@@ -162,6 +162,19 @@ export interface AppSettings {
   seeded: boolean;
   /** Schema version (mirrors Dexie schema version for reference). */
   schemaVersion: number;
+  // ----- Web Push (background notifications via the CF Worker) -----
+  /** Base URL of the deployed Cloudflare Worker (e.g. https://iron-track-push.<sub>.workers.dev). */
+  pushBackendUrl?: string;
+  /** VAPID public key (base64url, 65-byte uncompressed P-256). */
+  pushVapidPublicKey?: string;
+  /** Optional shared secret sent as X-Shared-Secret header. Empty = no auth. */
+  pushSharedSecret?: string;
+  /** Stable client identifier used to key this device's subscription on the server. */
+  pushClientId?: string;
+  /** Whether a push subscription is currently active. */
+  pushSubscribed?: boolean;
+  /** Last successful /subscribe sync timestamp. */
+  pushLastSyncAt?: Timestamp;
 }
 
 // ============================================================================

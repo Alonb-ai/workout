@@ -50,6 +50,37 @@ export class IronTrackDB extends Dexie {
       supplementLogs: 'id, supplementId, date, [supplementId+date]',
       settings: 'id',
     });
+
+    // v2 — adds Web Push fields on Settings. No store shape changes; only
+    // backfill the new properties on the existing singleton row.
+    this.version(2)
+      .stores({
+        plans: 'id, isActive, order',
+        workouts: 'id, planId, order, code',
+        muscleGroups: 'id, workoutId, order',
+        exercises: 'id, muscleGroupId, order',
+        sessions: 'id, workoutId, planId, date, status, [workoutId+date]',
+        exerciseLogs: 'id, sessionId, exerciseId, order',
+        setLogs: 'id, exerciseLogId, sessionId, exerciseId, setNumber',
+        supplements: 'id, active, order',
+        supplementLogs: 'id, supplementId, date, [supplementId+date]',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        const s = await tx.table('settings').get('singleton');
+        if (s) {
+          await tx.table('settings').put({
+            ...s,
+            schemaVersion: 2,
+            pushBackendUrl: s.pushBackendUrl ?? '',
+            pushVapidPublicKey: s.pushVapidPublicKey ?? '',
+            pushSharedSecret: s.pushSharedSecret ?? '',
+            pushClientId: s.pushClientId ?? '',
+            pushSubscribed: s.pushSubscribed ?? false,
+            pushLastSyncAt: s.pushLastSyncAt ?? 0,
+          });
+        }
+      });
   }
 }
 

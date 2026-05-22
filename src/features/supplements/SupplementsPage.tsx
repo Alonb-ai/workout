@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { Link } from 'react-router-dom';
+import { disablePush, enablePush, sendTestPush, syncSchedule } from '@/features/push/webPush';
 import { db, newId, now } from '@/db/db';
 import { Section } from '@/components/Section';
 import { EmptyState } from '@/components/EmptyState';
@@ -162,6 +164,52 @@ export function SupplementsPage() {
     toast.info('התראות נוטרלו');
   };
 
+  const [pushBusy, setPushBusy] = useState(false);
+
+  const handleEnablePush = async () => {
+    setPushBusy(true);
+    try {
+      const err = await enablePush(settings);
+      if (err) {
+        toast.error(err.message);
+        return;
+      }
+      toast.success('פוש לרקע הופעל');
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const handleDisablePush = async () => {
+    setPushBusy(true);
+    try {
+      await disablePush();
+      toast.info('פוש לרקע נוטרל');
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const handleTestPush = async () => {
+    setPushBusy(true);
+    try {
+      const res = await sendTestPush();
+      if (res.ok) toast.success(res.message);
+      else toast.error(res.message);
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  // Auto re-sync schedule whenever supplements change while push is enabled.
+  useEffect(() => {
+    if (!settings.pushSubscribed) return;
+    const t = setTimeout(() => {
+      void syncSchedule();
+    }, 600);
+    return () => clearTimeout(t);
+  }, [sups, settings.pushSubscribed]);
+
   return (
     <div className="pt-3">
       <header className="mb-3 flex items-center justify-between">
@@ -270,6 +318,62 @@ export function SupplementsPage() {
             <p className="pt-1">דרוש iOS 16.4 ומעלה.</p>
           </div>
         )}
+      </div>
+
+      {/* Background-push card (Cloudflare Worker driven) */}
+      <div className="card p-3 mb-4">
+        <div className="flex items-center gap-3">
+          <span
+            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+              settings.pushSubscribed ? 'bg-accent text-ink-950' : 'bg-ink-700 text-fg-muted'
+            }`}
+          >
+            <IconBell />
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">פוש לרקע (עובד גם כשהאפליקציה סגורה)</p>
+            <p className="text-2xs text-fg-muted">
+              {settings.pushSubscribed
+                ? `מסונכרן עם השרת${
+                    settings.pushLastSyncAt
+                      ? ` · ${new Date(settings.pushLastSyncAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`
+                      : ''
+                  }`
+                : !settings.pushBackendUrl || !settings.pushVapidPublicKey
+                  ? 'יש להגדיר Backend URL ו-VAPID Key ב'
+                  : 'מוגדר אך לא פעיל. לחץ "הפעל".'}
+              {!settings.pushBackendUrl || !settings.pushVapidPublicKey ? (
+                <Link to="/settings" className="text-accent font-semibold ms-1">הגדרות</Link>
+              ) : null}
+            </p>
+          </div>
+          {settings.pushSubscribed ? (
+            <>
+              <button
+                className="btn-ghost !min-h-9 !px-2 text-xs"
+                onClick={handleTestPush}
+                disabled={pushBusy}
+              >
+                שלח בדיקה
+              </button>
+              <button
+                className="btn-ghost !min-h-9 !px-2 text-xs"
+                onClick={handleDisablePush}
+                disabled={pushBusy}
+              >
+                כבה
+              </button>
+            </>
+          ) : (
+            <button
+              className="btn-primary !min-h-9 !px-2 text-xs"
+              onClick={handleEnablePush}
+              disabled={pushBusy || !settings.pushBackendUrl || !settings.pushVapidPublicKey}
+            >
+              הפעל פוש לרקע
+            </button>
+          )}
+        </div>
       </div>
 
       <Section
