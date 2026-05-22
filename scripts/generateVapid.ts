@@ -41,6 +41,12 @@ async function main(): Promise<void> {
   const publicKey = b64url(pubRaw);
   const privateKey = b64urlFromB64(jwk.d);
 
+  // Machine-readable output for consumption by worker/setup.sh.
+  if (process.argv.includes('--machine')) {
+    process.stdout.write(`PUBLIC=${publicKey}\nPRIVATE=${privateKey}\n`);
+    return;
+  }
+
   console.log('\n=== VAPID keypair ===\n');
   console.log('PUBLIC_KEY  (frontend + Worker secret VAPID_PUBLIC_KEY):');
   console.log(`  ${publicKey}\n`);

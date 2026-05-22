@@ -13,46 +13,48 @@ A tiny Cloudflare Worker that fires real Web Push notifications to your installe
 - Cloudflare Workers free tier: 100k requests/day. A single user generates a few dozen requests per day.
 - Cron triggers + KV storage are included in the free plan.
 
-## One-time setup (~15 minutes)
+## One-time setup (~5 minutes)
 
-You need: a Cloudflare account, Node.js 20+, and a couple of minutes to copy/paste values.
+You need: a Cloudflare account (free), Node.js 20+.
 
 ```bash
-# 1. From the repo root: install the Worker's dev tooling.
-cd worker
-npm install
+# 1. Clone the repo (if you haven't already).
+git clone https://github.com/Alonb-ai/workout.git
+cd workout
 
-# 2. Log in to Cloudflare (opens your browser).
-npx wrangler login
-
-# 3. Create a KV namespace for storing subscriptions.
-npx wrangler kv namespace create iron_track_subs
-# → prints: id = "abc123..." — copy this.
-
-# 4. Edit wrangler.toml and replace REPLACE_ME_WITH_KV_NAMESPACE_ID with the id.
-
-# 5. Generate a VAPID keypair (from the repo root, NOT the worker/ folder):
-cd ..
-npx tsx scripts/generateVapid.ts
-# → prints PUBLIC_KEY and PRIVATE_KEY (both base64url).
-
-# 6. Set them as Worker secrets (from worker/):
-cd worker
-npx wrangler secret put VAPID_PUBLIC_KEY   # paste the public key
-npx wrangler secret put VAPID_PRIVATE_KEY  # paste the private key
-npx wrangler secret put VAPID_SUBJECT      # type: mailto:you@example.com
-
-# 7. (Optional but recommended) protect the API with a shared secret so
-#    only the Iron Track frontend can enroll subscriptions:
-npx wrangler secret put SHARED_SECRET      # type any random string
-# Remember this value — you'll paste it into Iron Track's settings too.
-
-# 8. Deploy.
-npx wrangler deploy
-# → prints: https://iron-track-push.<your-subdomain>.workers.dev
+# 2. Run the setup script — it handles login, KV namespace, VAPID keys,
+#    secrets, and deploy for you.
+bash worker/setup.sh
 ```
 
-Copy that URL — it's the **backend URL** you'll paste into Iron Track's settings.
+The script will:
+- Open your browser once to log you in to Cloudflare.
+- Ask once for a contact email (any email; used only by push services if a delivery problem needs to be reported).
+- Print, at the end, the two values you paste into Iron Track:
+  - **Backend URL** — `https://iron-track-push.<your-subdomain>.workers.dev`
+  - **VAPID Public Key** — a long base64url string.
+
+### Manual steps (if you prefer not to use setup.sh)
+
+<details><summary>expand</summary>
+
+```bash
+cd worker
+npm install
+npx wrangler login
+npx wrangler kv namespace create iron_track_subs            # copy the "id"
+# Edit wrangler.toml and paste the id over REPLACE_ME_WITH_KV_NAMESPACE_ID.
+cd ..
+npx tsx scripts/generateVapid.ts                            # copy both keys
+cd worker
+npx wrangler secret put VAPID_PUBLIC_KEY                    # paste the public key
+npx wrangler secret put VAPID_PRIVATE_KEY                   # paste the private key
+npx wrangler secret put VAPID_SUBJECT                       # mailto:you@example.com
+npx wrangler secret put SHARED_SECRET                       # OPTIONAL — protects /subscribe
+npx wrangler deploy
+```
+
+</details>
 
 ## Plugging into Iron Track
 
