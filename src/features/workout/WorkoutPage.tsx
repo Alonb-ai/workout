@@ -11,6 +11,7 @@ import {
   IconCheck,
   IconPlus,
   IconRefresh,
+  IconTrash,
   IconTrophy,
   IconWarn,
 } from '@/components/Icon';
@@ -23,12 +24,22 @@ import {
   saveSession,
   type SaveResult,
 } from './buildSession';
+import { getWorkoutDraft } from '@/db/queries';
 import { todayISO } from '@/utils/dates';
 import { format } from 'date-fns';
 import { toast } from '@/store/toast';
+import { confirmDialog } from '@/components/Confirm';
 import { useStallFlags } from '../dashboard/useStallFlags';
 import { useTimerStore } from '@/store/timer';
 import { motion, AnimatePresence } from 'framer-motion';
+
+/** Has the user typed/marked anything meaningful that's worth persisting? */
+function isDraftDirty(drafts: DraftExercise[], notes: string): boolean {
+  if (notes.trim().length > 0) return true;
+  return drafts.some((d) =>
+    d.sets.some((s) => s.completed || s.weight !== '' || s.reps !== ''),
+  );
+}
 
 interface LocationState {
   workoutId?: string;
@@ -74,6 +85,8 @@ export function WorkoutPage() {
   const [addExerciseOpen, setAddExerciseOpen] = useState(false);
   const [scoreModalOpen, setScoreModalOpen] = useState(false);
   const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
+  const [restoredFromDraft, setRestoredFromDraft] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const startedAtRef = useRef<number>(Date.now());
   const stopTimer = useTimerStore((s) => s.stop);
 
@@ -83,12 +96,61 @@ export function WorkoutPage() {
   useEffect(() => {
     if (!selectedWorkoutId) return;
     setLoading(true);
-    startedAtRef.current = Date.now();
-    buildDraftFromWorkout(selectedWorkoutId).then((res) => {
-      if (res) setDrafts(res.drafts);
+    setRestoredFromDraft(false);
+    setLastSavedAt(null);
+    (async () => {
+      const existing = await getWorkoutDraft(selectedWorkoutId);
+      if (existing) {
+        setDrafts(existing.drafts);
+        setSessionDate(existing.sessionDate);
+        setNotes(existing.notes);
+        startedAtRef.current = existing.startedAt;
+        setRestoredFromDraft(true);
+        setLastSavedAt(existing.updatedAt);
+      } else {
+        startedAtRef.current = Date.now();
+        setSessionDate(todayISO());
+        setNotes('');
+        const res = await buildDraftFromWorkout(selectedWorkoutId);
+        if (res) setDrafts(res.drafts);
+      }
       setLoading(false);
-    });
+    })();
   }, [selectedWorkoutId]);
+
+  // Debounced autosave — runs whenever the user touches anything. Skipped
+  // while we're loading the initial draft so we don't churn an identical write.
+  useEffect(() => {
+    if (!selectedWorkoutId || loading) return;
+    const workout = workouts?.find((w) => w.id === selectedWorkoutId);
+    if (!workout) return;
+    const id = selectedWorkoutId;
+    const startedAt = startedAtRef.current;
+    const timer = window.setTimeout(async () => {
+      if (isDraftDirty(drafts, notes)) {
+        const updatedAt = Date.now();
+        await db.workoutDrafts.put({
+          workoutId: id,
+          planId: workout.planId,
+          workoutName: workout.name,
+          workoutCode: workout.code,
+          drafts,
+          sessionDate,
+          notes,
+          startedAt,
+          updatedAt,
+        });
+        setLastSavedAt(updatedAt);
+      } else {
+        const existing = await db.workoutDrafts.get(id);
+        if (existing) {
+          await db.workoutDrafts.delete(id);
+          setLastSavedAt(null);
+        }
+      }
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [drafts, notes, sessionDate, selectedWorkoutId, loading, workouts]);
 
   const completedCount = useMemo(
     () => drafts.reduce((s, d) => s + d.sets.filter((x) => x.completed).length, 0),
@@ -142,6 +204,10 @@ export function WorkoutPage() {
         startedAt: startedAtRef.current,
         ...(notes.trim() ? { notes: notes.trim() } : {}),
       });
+      // Wipe the autosaved draft now that the session is committed.
+      await db.workoutDrafts.delete(selectedWorkoutId);
+      setRestoredFromDraft(false);
+      setLastSavedAt(null);
       setSaveResult(res);
       setScoreModalOpen(true);
       stopTimer();
@@ -151,6 +217,29 @@ export function WorkoutPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const onDiscardDraft = async () => {
+    if (!selectedWorkoutId) return;
+    const ok = await confirmDialog({
+      title: 'להתחיל מחדש?',
+      body: 'הטיוטה הנוכחית תימחק וערכי האימון יחזרו למצב התחלתי. אין דרך לשחזר.',
+      confirmLabel: 'התחל מחדש',
+      cancelLabel: 'חזור',
+      destructive: true,
+    });
+    if (!ok) return;
+    await db.workoutDrafts.delete(selectedWorkoutId);
+    setLoading(true);
+    setRestoredFromDraft(false);
+    setLastSavedAt(null);
+    setNotes('');
+    setSessionDate(todayISO());
+    startedAtRef.current = Date.now();
+    const res = await buildDraftFromWorkout(selectedWorkoutId);
+    if (res) setDrafts(res.drafts);
+    setLoading(false);
+    toast.info('הטיוטה נמחקה — אפשר להתחיל מחדש.');
   };
 
   if (!activePlan || (workouts && workouts.length === 0)) {
@@ -210,6 +299,28 @@ export function WorkoutPage() {
           </button>
         ))}
       </div>
+
+      {/* Autosave / draft banner */}
+      {lastSavedAt !== null && (
+        <div className="card-flat px-3 py-1.5 mb-3 flex items-center justify-between gap-2 border-accent/30 bg-accent-soft/40">
+          <div className="min-w-0 flex items-center gap-2 text-xs">
+            <span className="w-2 h-2 rounded-full bg-accent shrink-0" />
+            <span className="text-fg-muted truncate">
+              {restoredFromDraft ? 'המשך טיוטה' : 'טיוטה נשמרה'} ·{' '}
+              <span className="num">{format(new Date(lastSavedAt), 'HH:mm')}</span>
+            </span>
+          </div>
+          <button
+            type="button"
+            className="btn-ghost !min-h-8 !px-2 text-2xs text-bad/90 hover:text-bad"
+            onClick={onDiscardDraft}
+            disabled={loading}
+            aria-label="התחל מחדש"
+          >
+            <IconTrash size={12} /> התחל מחדש
+          </button>
+        </div>
+      )}
 
       {/* progress bar */}
       <div className="card-flat px-3 py-2 mb-3 flex items-center justify-between">
@@ -358,6 +469,8 @@ export function WorkoutPage() {
           setScoreModalOpen(false);
           setSaveResult(null);
           setNotes('');
+          setSessionDate(todayISO());
+          startedAtRef.current = Date.now();
           // refresh drafts so ghost values reflect the just-saved session
           if (selectedWorkoutId) {
             buildDraftFromWorkout(selectedWorkoutId).then((res) => {

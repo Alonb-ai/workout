@@ -1,4 +1,4 @@
-import type { ID, ExerciseLog, SetLog } from '@/types';
+import type { ID, ExerciseLog, SetLog, ISODate, Timestamp } from '@/types';
 
 /** In-memory representation of a set being logged. */
 export interface DraftSet {
@@ -33,4 +33,21 @@ export interface DraftExercise {
 export interface BuiltSessionData {
   exerciseLog: Omit<ExerciseLog, 'sessionId'>;
   sets: Omit<SetLog, 'sessionId' | 'exerciseLogId'>[];
+}
+
+/**
+ * Auto-saved draft for an in-progress workout. Keyed by workoutId — only one
+ * draft per workout is kept at a time. Wiped after a successful Finish & Save
+ * or an explicit "start over". Lets a session survive refresh / tab close.
+ */
+export interface WorkoutDraft {
+  workoutId: ID;
+  planId: ID;
+  workoutName: string; // snapshot for dashboard hint
+  workoutCode: string; // snapshot for dashboard hint
+  drafts: DraftExercise[];
+  sessionDate: ISODate;
+  notes: string;
+  startedAt: Timestamp;
+  updatedAt: Timestamp;
 }

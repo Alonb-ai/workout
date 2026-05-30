@@ -6,6 +6,7 @@ import type {
   Session,
   ExerciseLog,
 } from '@/types';
+import type { WorkoutDraft } from '@/features/workout/types';
 import { statsForExercise } from '@/utils/scoring';
 
 /** Get all completed sessions for an exercise (ordered oldest → newest). */
@@ -89,6 +90,17 @@ export async function getLastSessionForWorkout(
   const logs = await db.exerciseLogs.where('sessionId').equals(last.id).toArray();
   const sets = await db.setLogs.where('sessionId').equals(last.id).toArray();
   return { session: last, logs, sets };
+}
+
+/** Fetch the autosaved draft for a workout (if any). */
+export async function getWorkoutDraft(workoutId: ID): Promise<WorkoutDraft | undefined> {
+  return db.workoutDrafts.get(workoutId);
+}
+
+/** All in-progress workout drafts, newest first. Used by the dashboard hint. */
+export async function getAllWorkoutDrafts(): Promise<WorkoutDraft[]> {
+  const all = await db.workoutDrafts.toArray();
+  return all.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 /** Get last N completed sessions of same workoutId, oldest → newest. */

@@ -10,10 +10,12 @@ compatibility_flags = ["nodejs_compat"]
 binding = "SUBS"
 id = "REPLACE_ME_WITH_KV_NAMESPACE_ID"
 
-# Cron: run every minute, scan all subscriptions, fire notifications
-# whose scheduled time matches the current local time.
+# Cron: run every 2 minutes. The handler matches both the current and the
+# previous minute's HH:MM (dedup via SENT_PREFIX) so no scheduled time can
+# fall in a "dead minute". Keeps KV list ops at 720/day, comfortably under
+# the free-tier 1,000/day cap.
 [triggers]
-crons = ["* * * * *"]
+crons = ["*/2 * * * *"]
 
 # Optional: protect the /subscribe endpoint with a shared secret so a random
 # stranger can't enroll someone into your push schedule. Set with:

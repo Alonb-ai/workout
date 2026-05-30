@@ -168,19 +168,22 @@ interface CronResult {
 }
 
 /**
- * Resolve "right now" in the subscription's local timezone, then fire any
- * scheduled doses whose time matches the current minute and that we haven't
- * already sent today (dedupe via SENT_PREFIX KV entries with 36h TTL).
+ * Resolve the current and previous minute in the subscription's local
+ * timezone, then fire any scheduled doses whose time matches either one and
+ * that we haven't already sent (dedupe via SENT_PREFIX KV entries with 36h
+ * TTL). Two-minute window pairs with the every-2-minutes cron so no
+ * scheduled HH:MM falls in a dead minute.
  */
 async function processSubscription(record: StoredSubscription, env: Env): Promise<CronResult> {
-  const local = nowInTimezone(record.timezone);
+  const moments = candidateMoments(record.timezone);
   const result: CronResult = { sent: 0, dropped: 0, subscriptionGone: false };
 
   for (const item of record.schedule) {
-    if (item.daysOfWeek.length > 0 && !item.daysOfWeek.includes(local.dow)) continue;
     for (const time of item.times) {
-      if (time !== local.hhmm) continue;
-      const dedupKey = `${SENT_PREFIX}${record.clientId}:${local.date}:${item.name}:${time}`;
+      const moment = moments.find((m) => m.hhmm === time);
+      if (!moment) continue;
+      if (item.daysOfWeek.length > 0 && !item.daysOfWeek.includes(moment.dow)) continue;
+      const dedupKey = `${SENT_PREFIX}${record.clientId}:${moment.date}:${item.name}:${time}`;
       const already = await env.SUBS.get(dedupKey);
       if (already) continue;
       const body = `${item.dose} ${item.unit}${item.withFood ? ' · עם אוכל' : ''} · ${time}`;
@@ -216,10 +219,14 @@ async function processSubscription(record: StoredSubscription, env: Env): Promis
   return result;
 }
 
-/** Get current Y/M/D, day-of-week (0=Sun), and HH:MM in the given IANA timezone. */
-function nowInTimezone(tz: string): { date: string; dow: number; hhmm: string } {
+/** Both the current minute and the one before it (handles midnight rollover). */
+function candidateMoments(tz: string): { date: string; dow: number; hhmm: string }[] {
   const now = new Date();
-  // Use Intl to format reliably regardless of the runtime's default tz.
+  const prev = new Date(now.getTime() - 60 * 1000);
+  return [partsInTimezone(now, tz), partsInTimezone(prev, tz)];
+}
+
+function partsInTimezone(when: Date, tz: string): { date: string; dow: number; hhmm: string } {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
     year: 'numeric',
@@ -229,7 +236,7 @@ function nowInTimezone(tz: string): { date: string; dow: number; hhmm: string } 
     minute: '2-digit',
     weekday: 'short',
     hour12: false,
-  }).formatToParts(now);
+  }).formatToParts(when);
   const map: Record<string, string> = {};
   for (const p of parts) map[p.type] = p.value;
   const date = `${map.year}-${map.month}-${map.day}`;
@@ -241,3 +248,4 @@ function nowInTimezone(tz: string): { date: string; dow: number; hhmm: string } 
   const dow = dowMap[map.weekday ?? ''] ?? 0;
   return { date, dow, hhmm };
 }
+
