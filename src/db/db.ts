@@ -11,6 +11,7 @@ import type {
   SupplementLog,
   AppSettings,
 } from '@/types';
+import type { WorkoutDraft } from '@/features/workout/types';
 
 /**
  * IronTrackDB
@@ -33,6 +34,7 @@ export class IronTrackDB extends Dexie {
   supplements!: Table<Supplement, string>;
   supplementLogs!: Table<SupplementLog, string>;
   settings!: Table<AppSettings, string>;
+  workoutDrafts!: Table<WorkoutDraft, string>;
 
   constructor() {
     super('iron-track');
@@ -79,6 +81,29 @@ export class IronTrackDB extends Dexie {
             pushSubscribed: s.pushSubscribed ?? false,
             pushLastSyncAt: s.pushLastSyncAt ?? 0,
           });
+        }
+      });
+
+    // v3 — `workoutDrafts` table for in-progress autosave. Keyed by workoutId,
+    // one row per workout. No data migration required (new empty store).
+    this.version(3)
+      .stores({
+        plans: 'id, isActive, order',
+        workouts: 'id, planId, order, code',
+        muscleGroups: 'id, workoutId, order',
+        exercises: 'id, muscleGroupId, order',
+        sessions: 'id, workoutId, planId, date, status, [workoutId+date]',
+        exerciseLogs: 'id, sessionId, exerciseId, order',
+        setLogs: 'id, exerciseLogId, sessionId, exerciseId, setNumber',
+        supplements: 'id, active, order',
+        supplementLogs: 'id, supplementId, date, [supplementId+date]',
+        settings: 'id',
+        workoutDrafts: 'workoutId, updatedAt',
+      })
+      .upgrade(async (tx) => {
+        const s = await tx.table('settings').get('singleton');
+        if (s) {
+          await tx.table('settings').put({ ...s, schemaVersion: 3 });
         }
       });
   }

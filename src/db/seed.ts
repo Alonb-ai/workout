@@ -171,7 +171,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   restTimerSound: true,
   dismissedStalls: {},
   seeded: false,
-  schemaVersion: 2,
+  schemaVersion: 3,
   pushBackendUrl: '',
   pushVapidPublicKey: '',
   pushSharedSecret: '',

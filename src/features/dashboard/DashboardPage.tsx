@@ -8,6 +8,7 @@ import {
   IconCalendar,
   IconChart,
   IconClock,
+  IconEdit,
   IconFlame,
   IconPill,
   IconSettings,
@@ -56,6 +57,10 @@ export function DashboardPage() {
 
   const supplements = useTodaySupplements();
   const stalls = useStallFlags();
+  const drafts = useLiveQuery(
+    async () => (await db.workoutDrafts.toArray()).sort((a, b) => b.updatedAt - a.updatedAt),
+    [],
+  );
 
   if (!activePlan) {
     return (
@@ -112,6 +117,44 @@ export function DashboardPage() {
           <IconSettings />
         </button>
       </header>
+
+      {/* In-progress drafts — surface so the user can pick up where they left off */}
+      {drafts && drafts.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="mb-5 space-y-2"
+        >
+          {drafts.map((d) => {
+            const totalSets = d.drafts.reduce((s, ex) => s + ex.targetSets, 0);
+            const doneSets = d.drafts.reduce(
+              (s, ex) => s + ex.sets.filter((x) => x.completed).length,
+              0,
+            );
+            return (
+              <Link
+                key={d.workoutId}
+                to="/workout"
+                state={{ workoutId: d.workoutId }}
+                className="block card border-accent/40 bg-accent-soft/30 p-3 flex items-center gap-3"
+              >
+                <div className="shrink-0 w-10 h-10 rounded-xl bg-accent text-ink-950 flex items-center justify-center">
+                  <IconEdit size={18} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-2xs uppercase tracking-wider text-accent">המשך טיוטה</p>
+                  <p className="font-bold truncate text-sm">{d.workoutName}</p>
+                  <p className="text-2xs text-fg-muted num">
+                    {doneSets}/{totalSets} סטים · נשמרה {format(new Date(d.updatedAt), 'HH:mm')}
+                  </p>
+                </div>
+                <span className="text-accent text-xs font-semibold">המשך ←</span>
+              </Link>
+            );
+          })}
+        </motion.div>
+      )}
 
       {/* Next workout card */}
       {nextWorkout && (

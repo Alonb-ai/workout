@@ -57,6 +57,7 @@ src/
 | `supplements`  | `id`        | `daysOfWeek`, `times`, `active`, `order`                            |
 | `supplementLogs` | `id`      | `[supplementId+date]`, `scheduledTime`, `status`                    |
 | `settings`     | `id="singleton"` | App-wide preferences, plate inventory, dismissed stall flags    |
+| `workoutDrafts`| `workoutId`     | Autosaved in-progress session (drafts/notes/sessionDate). One per workout. Wiped on Finish & Save or explicit discard. |
 
 **Snapshot fields on logs are intentional.** They preserve session history even if the user later renames or deletes the source exercise.
 
@@ -68,7 +69,7 @@ src/
 4. **No native dialogs.** No `prompt` / `confirm` / `alert`. Use the in-app `Modal` + `confirmDialog()` (`src/components/Confirm.tsx`).
 5. **No `localStorage` for app data.** Everything user-relevant is in Dexie. `sessionStorage` is OK for transient UI state (the supplement scheduler uses it to dedupe notifications per session).
 6. **Mobile-first.** Touch targets ≥ 44×44 px. Number inputs use `inputmode="decimal"` (see `NumberInput`). Safe-area insets honored via `env(safe-area-inset-*)`.
-7. **Never lose data on refresh.** All persistence goes through Dexie. The in-memory logger draft is rebuilt from DB on mount; the `Session` is only written on Finish & Save.
+7. **Never lose data on refresh.** All persistence goes through Dexie. The active workout autosaves to `workoutDrafts` on every change (debounced 500 ms) and is restored on mount; the final `Session` is only written on Finish & Save, at which point the draft is deleted.
 8. **Dexie schema is versioned.** When changing the shape: add a new `.version(N)` block in `src/db/db.ts` and write the migration. Never mutate an existing version.
 
 ## Scoring / progression rules (single source of truth)
@@ -99,6 +100,8 @@ All this logic lives in `src/utils/scoring.ts` and `src/utils/stall.ts`. Run `np
 - **Recharts is LTR.** The chart wrapper sets `direction: ltr` so axis labels and tooltips render correctly even on an RTL page (see `src/index.css`).
 - **iOS Notifications.** Web Push fires from a Service Worker registered on a PWA installed to Home Screen on iOS 16.4+. Outside that, only **foreground** scheduling works via `Notification.requestPermission` + `showNotification`. The `supplements/scheduler.ts` runs a 30s tick while the app is open to catch missed doses in-session. Be explicit with the user about these limits.
 - **Background push** comes from `worker/` — a Cloudflare Worker (hand-rolled VAPID + RFC 8291) that stores subscriptions in KV and fires pushes from a cron trigger. The frontend (`features/push/webPush.ts`) re-syncs the schedule whenever supplements change. SW lives at `src/sw.ts` and uses `injectManifest` (NOT `generateSW`) so we can add a custom `push` event handler — when changing PWA strategy, both files must stay in sync.
+- **Cloudflare KV free-tier ceiling.** The cron runs every **2 minutes** (`*/2 * * * *`) — every-minute cron blew past the 1,000 list ops/day cap. To compensate, `processSubscription` matches HH:MM against *both* the current minute and the previous one (see `candidateMoments` in `worker/src/index.ts`); the existing `SENT_PREFIX` dedupe key (per `date+name+time`) keeps things idempotent so the overlap can't double-fire. When changing cron cadence, keep the match window ≥ the cron interval.
+- **Rest timer sound.** Schedules two short beeps via `AudioContext` *absolute* time at `start(rest)` (see `RestTimerBar.tsx`) so they fire even if the main thread is throttled (background tab). Also acquires the Wake Lock API while a timer is active. On iOS PWA, switching to another app suspends the AudioContext — no audio fires; that's a browser limit, not ours. The `setTimeout`-driven SW `showNotification` is a best-effort fallback for backgrounded tabs.
 - **Plate math operates in 0.01 kg integer cents** to avoid floating-point drift on 1.25 / 2.5 plates. Plates are loaded in **pairs** (`qty` is the total plates owned, not pairs).
 - **`PromiseExtended` vs `Promise`.** `useLiveQuery(() => cond ? db... : Promise.resolve([]), …)` produces an inferred type that confuses TS — always wrap with `useLiveQuery(async () => { if (!cond) return []; return db... })`.
 - **Dexie transactions.** Reads inside an `rw` transaction don't reliably reflect uncommitted writes from the same transaction in all browsers — when a save needs to read history (e.g. to compute PRs), do the reads *before* opening the transaction, then write inside it. See `features/workout/buildSession.ts`.
