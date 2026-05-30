@@ -3,12 +3,14 @@ main = "src/index.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
-# KV namespace stores one entry per push subscription.
-# Create with: npx wrangler kv namespace create iron_track_subs
-# Then paste the printed `id` here.
+# KV namespace stores one entry per push subscription. The id below is this
+# project's namespace — not a secret (it's a public identifier; access requires
+# Cloudflare credentials). If you fork the project, create your own namespace:
+#   npx wrangler kv namespace create iron_track_subs
+# and paste the printed `id` in place of the one below.
 [[kv_namespaces]]
 binding = "SUBS"
-id = "REPLACE_ME_WITH_KV_NAMESPACE_ID"
+id = "d7f54f4aa6f7400e84ca99e02e7eb5f7"
 
 # Cron: run every 2 minutes. The handler matches both the current and the
 # previous minute's HH:MM (dedup via SENT_PREFIX) so no scheduled time can

@@ -83,14 +83,17 @@ if [ -z "$KV_ID" ]; then
 fi
 ok "KV namespace id: $KV_ID"
 
-# Patch wrangler.toml (idempotent — only replaces the placeholder).
-if grep -q "REPLACE_ME_WITH_KV_NAMESPACE_ID" wrangler.toml; then
-  # Portable in-place sed (works on macOS and Linux).
-  sed -i.bak "s|REPLACE_ME_WITH_KV_NAMESPACE_ID|$KV_ID|" wrangler.toml
-  rm -f wrangler.toml.bak
-  ok "wrangler.toml patched"
+# Patch wrangler.toml so it points at THIS account's namespace. The repo
+# ships with the upstream maintainer's id committed; on a fork we overwrite
+# it with the one we just created/found above. Idempotent.
+CURRENT_ID=$(grep -E '^id = "' wrangler.toml | head -1 | cut -d'"' -f2)
+if [ "$CURRENT_ID" = "$KV_ID" ]; then
+  dim "wrangler.toml already has this KV id — leaving it alone"
 else
-  dim "wrangler.toml already had a KV id — leaving it alone"
+  # Portable in-place sed (works on macOS and Linux).
+  sed -i.bak -E "s|^id = \".*\"|id = \"$KV_ID\"|" wrangler.toml
+  rm -f wrangler.toml.bak
+  ok "wrangler.toml id set to $KV_ID"
 fi
 
 bold "==> 5/8  Generating VAPID keypair"

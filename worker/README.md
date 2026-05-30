@@ -42,8 +42,9 @@ The script will:
 cd worker
 npm install
 npx wrangler login
-npx wrangler kv namespace create iron_track_subs            # copy the "id"
-# Edit wrangler.toml and paste the id over REPLACE_ME_WITH_KV_NAMESPACE_ID.
+# Only if you're forking — replace the committed KV id in wrangler.toml:
+#   npx wrangler kv namespace create iron_track_subs
+#   (then paste the printed id over the one in wrangler.toml)
 cd ..
 npx tsx scripts/generateVapid.ts                            # copy both keys
 cd worker
