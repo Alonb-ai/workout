@@ -5,6 +5,7 @@ import type {
   SetLog,
   Session,
   ExerciseLog,
+  BodyMeasurement,
 } from '@/types';
 import type { WorkoutDraft } from '@/features/workout/types';
 import { statsForExercise } from '@/utils/scoring';
@@ -116,6 +117,18 @@ export async function purgeStaleWorkoutDrafts(maxAgeHours = 24): Promise<number>
   if (stale.length === 0) return 0;
   await db.workoutDrafts.bulkDelete(stale.map((d) => d.workoutId));
   return stale.length;
+}
+
+/** All body measurements, oldest → newest (suits chart consumption). */
+export async function getBodyMeasurementsAsc(): Promise<BodyMeasurement[]> {
+  const all = await db.bodyMeasurements.toArray();
+  return all.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.createdAt - b.createdAt));
+}
+
+/** Most recent body measurement (or null). */
+export async function getLatestBodyMeasurement(): Promise<BodyMeasurement | null> {
+  const all = await getBodyMeasurementsAsc();
+  return all.length > 0 ? all[all.length - 1]! : null;
 }
 
 /** Get last N completed sessions of same workoutId, oldest → newest. */

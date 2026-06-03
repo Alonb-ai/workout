@@ -76,7 +76,44 @@ async function tick(): Promise<void> {
     await checkDayWindow(sups, yIso, yesterday.getDay(), currentMinutes + 1440, notified);
   }
 
+  // Body-measurement weekly reminder. Same 6h late window + per-day dedup.
+  if (settings.bodyReminderEnabled) {
+    await checkBodyReminder(settings.bodyReminderDow ?? 0, settings.bodyReminderTime ?? '09:00',
+      now, currentMinutes, notified);
+  }
+
   writeNotified(notified);
+}
+
+async function checkBodyReminder(
+  dow: number,
+  time: string,
+  now: Date,
+  currentMinutes: number,
+  notified: NotifiedMap,
+): Promise<void> {
+  if (now.getDay() !== dow) return;
+  const [h, m] = time.split(':').map(Number);
+  if (h === undefined || m === undefined) return;
+  const sched = h * 60 + m;
+  if (sched > currentMinutes) return;
+  if (currentMinutes - sched > 6 * 60) return;
+  const date = todayISO();
+  const key = `body|${date}|${time}`;
+  if (notified[key]) return;
+  // Skip the nudge if today already has a measurement logged.
+  const todays = await db.bodyMeasurements.where('date').equals(date).toArray();
+  if (todays.length > 0) return;
+  try {
+    await showNotification('תזכורת — שקול את עצמך', {
+      body: 'שמירה על מדידות שבועיות עוזרת לעקוב אחרי מגמות.',
+      tag: key,
+      data: { url: '/#/body' },
+    });
+    notified[key] = Date.now();
+  } catch {
+    // silent
+  }
 }
 
 async function checkDayWindow(

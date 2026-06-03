@@ -140,6 +140,33 @@ export interface SupplementLog {
   status: SupplementLogStatus;
 }
 
+/**
+ * Self-reported body measurement (manual entry; no API integration).
+ * `bodyWeight` is required; the rest are optional so the entry form stays
+ * fast on weight-only days and lets InBody numbers be filled in when
+ * available.
+ */
+export interface BodyMeasurement {
+  id: ID;
+  date: ISODate; // user-editable; defaults to today
+  bodyWeight: number; // kg
+  fatPct?: number; // 0-100
+  muscleMass?: number; // kg (skeletal muscle mass per InBody convention)
+  notes?: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/**
+ * Static-ish per-user metrics used by FFMI / strength-standard benchmarks.
+ * Asked once on the body page; editable from settings.
+ */
+export interface BodyProfile {
+  sex?: 'male' | 'female';
+  birthYear?: number;
+  heightCm?: number;
+}
+
 export interface PlatePair {
   weight: number; // single plate weight
   qty: number; // number of plates the user OWNS (NOT pairs). e.g. 4 = 2 pairs of that weight.
@@ -175,6 +202,15 @@ export interface AppSettings {
   pushSubscribed?: boolean;
   /** Last successful /subscribe sync timestamp. */
   pushLastSyncAt?: Timestamp;
+  // ----- Body measurements -----
+  /** Static-ish user profile used by FFMI / strength benchmarks. */
+  bodyProfile?: BodyProfile;
+  /** Whether the weekly body-measurement reminder is enabled. */
+  bodyReminderEnabled?: boolean;
+  /** Day of week the weekly reminder fires (0=Sun … 6=Sat). */
+  bodyReminderDow?: number;
+  /** HH:MM time the weekly reminder fires (user-local). */
+  bodyReminderTime?: string;
 }
 
 // ============================================================================

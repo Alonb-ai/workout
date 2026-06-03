@@ -10,6 +10,7 @@ import type {
   Supplement,
   SupplementLog,
   AppSettings,
+  BodyMeasurement,
 } from '@/types';
 import type { WorkoutDraft } from '@/features/workout/types';
 
@@ -35,6 +36,7 @@ export class IronTrackDB extends Dexie {
   supplementLogs!: Table<SupplementLog, string>;
   settings!: Table<AppSettings, string>;
   workoutDrafts!: Table<WorkoutDraft, string>;
+  bodyMeasurements!: Table<BodyMeasurement, string>;
 
   constructor() {
     super('iron-track');
@@ -104,6 +106,37 @@ export class IronTrackDB extends Dexie {
         const s = await tx.table('settings').get('singleton');
         if (s) {
           await tx.table('settings').put({ ...s, schemaVersion: 3 });
+        }
+      });
+
+    // v4 — body measurements + per-user profile fields on Settings. Adds a
+    // new `bodyMeasurements` table keyed by id; no migration of existing
+    // rows needed (it's empty).
+    this.version(4)
+      .stores({
+        plans: 'id, isActive, order',
+        workouts: 'id, planId, order, code',
+        muscleGroups: 'id, workoutId, order',
+        exercises: 'id, muscleGroupId, order',
+        sessions: 'id, workoutId, planId, date, status, [workoutId+date]',
+        exerciseLogs: 'id, sessionId, exerciseId, order',
+        setLogs: 'id, exerciseLogId, sessionId, exerciseId, setNumber',
+        supplements: 'id, active, order',
+        supplementLogs: 'id, supplementId, date, [supplementId+date]',
+        settings: 'id',
+        workoutDrafts: 'workoutId, updatedAt',
+        bodyMeasurements: 'id, date',
+      })
+      .upgrade(async (tx) => {
+        const s = await tx.table('settings').get('singleton');
+        if (s) {
+          await tx.table('settings').put({
+            ...s,
+            schemaVersion: 4,
+            bodyReminderEnabled: s.bodyReminderEnabled ?? false,
+            bodyReminderDow: s.bodyReminderDow ?? 0, // Sunday default
+            bodyReminderTime: s.bodyReminderTime ?? '09:00',
+          });
         }
       });
   }
