@@ -119,9 +119,12 @@ export function WorkoutPage() {
   }, [selectedWorkoutId]);
 
   // Debounced autosave — runs whenever the user touches anything. Skipped
-  // while we're loading the initial draft so we don't churn an identical write.
+  // while we're loading the initial draft (would churn an identical write) or
+  // while the post-save score modal is up (the in-memory drafts still contain
+  // completed sets but the session is already committed; recreating the draft
+  // here is what produced the "ghost draft" bug).
   useEffect(() => {
-    if (!selectedWorkoutId || loading) return;
+    if (!selectedWorkoutId || loading || saveResult) return;
     const workout = workouts?.find((w) => w.id === selectedWorkoutId);
     if (!workout) return;
     const id = selectedWorkoutId;
@@ -150,7 +153,7 @@ export function WorkoutPage() {
       }
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [drafts, notes, sessionDate, selectedWorkoutId, loading, workouts]);
+  }, [drafts, notes, sessionDate, selectedWorkoutId, loading, workouts, saveResult]);
 
   const completedCount = useMemo(
     () => drafts.reduce((s, d) => s + d.sets.filter((x) => x.completed).length, 0),
@@ -204,10 +207,18 @@ export function WorkoutPage() {
         startedAt: startedAtRef.current,
         ...(notes.trim() ? { notes: notes.trim() } : {}),
       });
-      // Wipe the autosaved draft now that the session is committed.
+      // Wipe the autosaved draft now that the session is committed. Reset the
+      // in-memory state immediately so the autosave effect — which resumes
+      // when the score modal closes (saveResult goes back to null) — sees a
+      // clean draft and doesn't re-create the row we just deleted.
       await db.workoutDrafts.delete(selectedWorkoutId);
       setRestoredFromDraft(false);
       setLastSavedAt(null);
+      setNotes('');
+      setSessionDate(todayISO());
+      startedAtRef.current = Date.now();
+      const fresh = await buildDraftFromWorkout(selectedWorkoutId);
+      if (fresh) setDrafts(fresh.drafts);
       setSaveResult(res);
       setScoreModalOpen(true);
       stopTimer();
@@ -462,21 +473,13 @@ export function WorkoutPage() {
         />
       )}
 
-      {/* Post-save: score modal */}
+      {/* Post-save: score modal — state was already reset in onSave, so we
+          only flip the modal flags and navigate away. */}
       <Modal
         open={scoreModalOpen}
         onClose={() => {
           setScoreModalOpen(false);
           setSaveResult(null);
-          setNotes('');
-          setSessionDate(todayISO());
-          startedAtRef.current = Date.now();
-          // refresh drafts so ghost values reflect the just-saved session
-          if (selectedWorkoutId) {
-            buildDraftFromWorkout(selectedWorkoutId).then((res) => {
-              if (res) setDrafts(res.drafts);
-            });
-          }
           navigate('/progress');
         }}
         title="האימון נשמר 🎉"

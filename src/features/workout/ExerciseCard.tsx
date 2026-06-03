@@ -136,13 +136,16 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
       </div>
 
       <div className="px-2 pt-1 pb-2">
-        <div className="grid grid-cols-[1.75rem,1fr,1fr,auto,auto,auto] gap-x-2 px-2 pb-1 text-2xs text-fg-muted">
-          <span></span>
-          <span className="text-center">משקל (נטו kg)</span>
-          <span className="text-center">חזרות</span>
-          <span></span>
-          <span></span>
-          <span></span>
+        <div className="flex items-center gap-1.5 px-1.5 pb-1 text-2xs text-fg-muted">
+          <span className="w-5 shrink-0" />
+          <div className="flex-1 min-w-0 grid grid-cols-2 gap-1.5">
+            <span className="text-center">משקל (נטו kg)</span>
+            <span className="text-center">חזרות</span>
+          </div>
+          {/* spacers align with the row's action buttons (calc · ✓ · RPE) */}
+          <span className="w-8 shrink-0" />
+          <span className="w-9 shrink-0" />
+          <span className="w-9 shrink-0" />
         </div>
 
         <div className="space-y-1.5">
