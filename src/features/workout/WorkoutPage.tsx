@@ -374,7 +374,10 @@ export function WorkoutPage() {
         </button>
       </div>
 
-      {loading && drafts.length === 0 ? (
+      {/* Show the loader whenever we're loading — also when switching between
+          workout tabs — so the previous workout's drafts don't flash in until
+          the new ones come in. */}
+      {loading ? (
         <div className="card p-6 text-center text-fg-muted">טוען אימון…</div>
       ) : (
         <Section noPad>
