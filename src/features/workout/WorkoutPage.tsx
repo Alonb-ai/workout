@@ -37,7 +37,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 function isDraftDirty(drafts: DraftExercise[], notes: string): boolean {
   if (notes.trim().length > 0) return true;
   return drafts.some((d) =>
-    d.sets.some((s) => s.completed || s.weight !== '' || s.reps !== ''),
+    d.sets.some(
+      (s) =>
+        s.completed ||
+        s.weight !== '' ||
+        s.reps !== '' ||
+        (s.rpe !== undefined && s.rpe !== ''),
+    ),
   );
 }
 
@@ -88,6 +94,10 @@ export function WorkoutPage() {
   const [restoredFromDraft, setRestoredFromDraft] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const startedAtRef = useRef<number>(Date.now());
+  // Hardens against an in-flight autosave timer (already fired but mid-await)
+  // overwriting the just-saved/discarded draft. When true, the autosave
+  // callback bails before touching the DB.
+  const savingRef = useRef(false);
   const stopTimer = useTimerStore((s) => s.stop);
 
   const stallFlags = useStallFlags();
@@ -129,7 +139,11 @@ export function WorkoutPage() {
     if (!workout) return;
     const id = selectedWorkoutId;
     const startedAt = startedAtRef.current;
+    let cancelled = false;
     const timer = window.setTimeout(async () => {
+      // Bail if a save/discard kicked off after the timer was scheduled but
+      // before it fired — otherwise we'd overwrite the freshly committed state.
+      if (savingRef.current || cancelled) return;
       if (isDraftDirty(drafts, notes)) {
         const updatedAt = Date.now();
         await db.workoutDrafts.put({
@@ -143,16 +157,19 @@ export function WorkoutPage() {
           startedAt,
           updatedAt,
         });
-        setLastSavedAt(updatedAt);
+        if (!cancelled && !savingRef.current) setLastSavedAt(updatedAt);
       } else {
         const existing = await db.workoutDrafts.get(id);
-        if (existing) {
+        if (existing && !savingRef.current) {
           await db.workoutDrafts.delete(id);
-          setLastSavedAt(null);
+          if (!cancelled) setLastSavedAt(null);
         }
       }
     }, 500);
-    return () => window.clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [drafts, notes, sessionDate, selectedWorkoutId, loading, workouts, saveResult]);
 
   const completedCount = useMemo(
@@ -199,6 +216,7 @@ export function WorkoutPage() {
     setConfirmIncompleteOpen(false);
     setSummaryOpen(false);
     setLoading(true);
+    savingRef.current = true;
     try {
       const res = await saveSession({
         workout,
@@ -240,8 +258,9 @@ export function WorkoutPage() {
       destructive: true,
     });
     if (!ok) return;
-    await db.workoutDrafts.delete(selectedWorkoutId);
     setLoading(true);
+    savingRef.current = true;
+    await db.workoutDrafts.delete(selectedWorkoutId);
     setRestoredFromDraft(false);
     setLastSavedAt(null);
     setNotes('');
@@ -249,6 +268,7 @@ export function WorkoutPage() {
     startedAtRef.current = Date.now();
     const res = await buildDraftFromWorkout(selectedWorkoutId);
     if (res) setDrafts(res.drafts);
+    savingRef.current = false;
     setLoading(false);
     toast.info('הטיוטה נמחקה — אפשר להתחיל מחדש.');
   };
@@ -480,6 +500,7 @@ export function WorkoutPage() {
         onClose={() => {
           setScoreModalOpen(false);
           setSaveResult(null);
+          savingRef.current = false;
           navigate('/progress');
         }}
         title="האימון נשמר 🎉"
@@ -489,6 +510,7 @@ export function WorkoutPage() {
             onClick={() => {
               setScoreModalOpen(false);
               setSaveResult(null);
+              savingRef.current = false;
               navigate('/progress');
             }}
           >

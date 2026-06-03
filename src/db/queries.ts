@@ -103,6 +103,21 @@ export async function getAllWorkoutDrafts(): Promise<WorkoutDraft[]> {
   return all.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/**
+ * Delete any workoutDrafts not touched in the last `maxAgeHours`. Run on
+ * app startup to clear orphans left over from older versions that didn't
+ * clean up after Finish & Save, and to wipe abandoned drafts that the user
+ * never came back to. Real users finish a session in under 2 hours; 24h is
+ * a safe abandonment threshold. Returns count of rows deleted.
+ */
+export async function purgeStaleWorkoutDrafts(maxAgeHours = 24): Promise<number> {
+  const cutoff = Date.now() - maxAgeHours * 3600 * 1000;
+  const stale = await db.workoutDrafts.where('updatedAt').below(cutoff).toArray();
+  if (stale.length === 0) return 0;
+  await db.workoutDrafts.bulkDelete(stale.map((d) => d.workoutId));
+  return stale.length;
+}
+
 /** Get last N completed sessions of same workoutId, oldest → newest. */
 export async function getRecentWorkoutSessions(
   workoutId: ID,
