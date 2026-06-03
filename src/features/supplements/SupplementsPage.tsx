@@ -139,6 +139,17 @@ export function SupplementsPage() {
   };
 
   const onClearLog = async (supplementId: string, scheduledTime: string) => {
+    // Tap-to-clear was easy to hit by accident (the button is large and lives
+    // mid-scroll). Confirm before discarding the log so an accidental tap is
+    // recoverable.
+    const ok = await confirmDialog({
+      title: 'לאפס את הסימון?',
+      body: `הסימון של ${scheduledTime} יוסר. תוכל לסמן שוב אחר כך.`,
+      confirmLabel: 'אפס',
+      cancelLabel: 'ביטול',
+      destructive: true,
+    });
+    if (!ok) return;
     const existing = await db.supplementLogs
       .where('[supplementId+date]')
       .equals([supplementId, viewDate])
@@ -423,7 +434,7 @@ export function SupplementsPage() {
                   <>
                     <button
                       className="btn !min-h-9 !px-2 text-2xs bg-good text-ink-950"
-                      aria-label="נלקח · לחיצה ארוכה לאיפוס"
+                      aria-label="נלקח · לחץ לאיפוס"
                       onClick={() => onClearLog(row.supplement.id, row.scheduledTime)}
                     >
                       <IconCheck size={14} />
@@ -714,19 +725,26 @@ function SupplementForm({
       <div>
         <label className="label">צבע</label>
         <div className="flex gap-2 flex-wrap">
-          {DEFAULT_COLORS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              className="w-8 h-8 rounded-full border-2"
-              style={{
-                backgroundColor: c,
-                borderColor: c === draft.color ? '#ffffff' : 'transparent',
-              }}
-              aria-label={`צבע ${c}`}
-              onClick={() => onChange({ ...draft, color: c })}
-            />
-          ))}
+          {DEFAULT_COLORS.map((c) => {
+            const selected = c === draft.color;
+            return (
+              <button
+                key={c}
+                type="button"
+                className="w-9 h-9 rounded-full border-2 flex items-center justify-center text-ink-950"
+                style={{
+                  backgroundColor: c,
+                  borderColor: selected ? '#ffffff' : 'transparent',
+                  boxShadow: selected ? '0 0 0 2px rgba(255,255,255,0.25)' : undefined,
+                }}
+                aria-label={`צבע ${c}${selected ? ' · נבחר' : ''}`}
+                aria-pressed={selected}
+                onClick={() => onChange({ ...draft, color: c })}
+              >
+                {selected && <IconCheck size={16} />}
+              </button>
+            );
+          })}
         </div>
       </div>
 

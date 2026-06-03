@@ -16,6 +16,7 @@ import {
 import { useTimerStore } from '@/store/timer';
 import { useWorkoutSessionStore } from '@/store/workoutSession';
 import { Modal } from '@/components/Modal';
+import { confirmDialog } from '@/components/Confirm';
 import { NumberInput } from '@/components/NumberInput';
 import { db } from '@/db/db';
 
@@ -255,9 +256,16 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
           <li>
             <button
               className="w-full text-right py-3 px-1 hover:bg-ink-800 rounded-lg text-bad"
-              onClick={() => {
+              onClick={async () => {
                 setMenuOpen(false);
-                onRemove();
+                const ok = await confirmDialog({
+                  title: 'להסיר את התרגיל מהאימון?',
+                  body: `${draft.exerciseName} יוסר מהאימון הנוכחי בלבד. הוא יישאר בתכנית והסטים שכבר סומנו ייעלמו.`,
+                  confirmLabel: 'הסר',
+                  cancelLabel: 'ביטול',
+                  destructive: true,
+                });
+                if (ok) onRemove();
               }}
             >
               הסר תרגיל מהאימון

@@ -557,7 +557,7 @@ function MuscleGroupCard({ group }: { group: MuscleGroup }) {
     await db.exercises.add({
       id: newId(),
       muscleGroupId: group.id,
-      name: 'New Exercise',
+      name: 'תרגיל חדש',
       targetSets: 3,
       targetRepsMin: 6,
       targetRepsMax: 10,

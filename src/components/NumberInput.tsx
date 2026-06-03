@@ -41,7 +41,9 @@ export function NumberInput({
   inputClassName,
 }: NumberInputProps) {
   const [text, setText] = useState<string>(value === '' ? '' : String(value));
+  const [clamped, setClamped] = useState(false);
   const lastValue = useRef(value);
+  const clampTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (lastValue.current !== value) {
@@ -49,6 +51,21 @@ export function NumberInput({
       lastValue.current = value;
     }
   }, [value]);
+
+  useEffect(() => {
+    return () => {
+      if (clampTimerRef.current !== null) window.clearTimeout(clampTimerRef.current);
+    };
+  }, []);
+
+  const flashClamp = () => {
+    setClamped(true);
+    if (clampTimerRef.current !== null) window.clearTimeout(clampTimerRef.current);
+    clampTimerRef.current = window.setTimeout(() => {
+      setClamped(false);
+      clampTimerRef.current = null;
+    }, 700);
+  };
 
   const commit = (s: string) => {
     const cleaned = s.replace(',', '.').trim();
@@ -60,13 +77,26 @@ export function NumberInput({
     const n = Number(cleaned);
     if (!Number.isFinite(n)) return;
     let v = n;
-    if (min !== undefined) v = Math.max(min, v);
-    if (max !== undefined) v = Math.min(max, v);
+    let didClamp = false;
+    if (min !== undefined && v < min) {
+      v = min;
+      didClamp = true;
+    }
+    if (max !== undefined && v > max) {
+      v = max;
+      didClamp = true;
+    }
     // Round to decimals
     const factor = Math.pow(10, decimals);
     v = Math.round(v * factor) / factor;
     onChange(v);
     lastValue.current = v;
+    if (didClamp) {
+      // Update the input text to the clamped value so the user sees what was
+      // actually stored, and flash a brief warn outline as a visual cue.
+      setText(String(v));
+      flashClamp();
+    }
   };
 
   const step$ = (delta: number) => {
@@ -100,8 +130,9 @@ export function NumberInput({
           pattern="[0-9]*[.,]?[0-9]*"
           autoComplete="off"
           className={cn(
-            'input num text-center w-full',
+            'input num text-center w-full transition-shadow',
             ghost !== undefined && text === '' && 'placeholder:text-fg-ghost',
+            clamped && 'ring-2 ring-warn/70',
             inputClassName,
           )}
           value={text}
