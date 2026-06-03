@@ -7,6 +7,7 @@ import { IconArrowRight, IconChart, IconTrophy } from '@/components/Icon';
 import { getExerciseHistory } from '@/db/queries';
 import { statsForExercise, compareToPrevious } from '@/utils/scoring';
 import { detectStall } from '@/utils/stall';
+import { computeProgressionRate, suggestDeload, findSubstitutes } from '@/utils/insights';
 import { formatHebDate } from '@/utils/dates';
 import {
   LineChart,
@@ -39,6 +40,10 @@ export function ExerciseHistoryPage() {
     statsForExercise(h.session.id, exercise.id, h.session.date, h.sets, h.exerciseLog.targetSets),
   );
   const stall = detectStall(stats, exercise.name);
+  const progression = computeProgressionRate(stats);
+  const deload = stall ? suggestDeload(stats) : null;
+  const allExercises = useLiveQuery(() => db.exercises.toArray(), []) ?? [];
+  const subs = stall ? findSubstitutes(exercise.id, allExercises, 3) : [];
 
   const chartData = stats.map((s) => ({
     date: s.date,
@@ -62,18 +67,57 @@ export function ExerciseHistoryPage() {
         </p>
       </header>
 
+      {progression && (
+        <div className="card p-3 mb-4 flex items-start gap-3">
+          <span className="w-9 h-9 rounded-xl bg-accent-soft text-accent flex items-center justify-center shrink-0">
+            <IconChart size={18} />
+          </span>
+          <div className="flex-1 text-sm">
+            <p className="font-semibold">קצב התקדמות</p>
+            <p className="text-xs text-fg-muted mt-0.5">
+              משקל מקס לאורך {progression.spanDays} ימים ({progression.sampleSize} אימונים)
+            </p>
+            <p className="text-xs mt-1">
+              <span className={`num font-semibold ${progression.kgPerMonth >= 0 ? 'text-good' : 'text-bad'}`}>
+                {progression.kgPerMonth >= 0 ? '+' : ''}
+                {progression.kgPerMonth} kg / חודש
+              </span>
+              <span className="text-fg-muted"> ({progression.pctPerMonth >= 0 ? '+' : ''}{progression.pctPerMonth}%)</span>
+            </p>
+          </div>
+        </div>
+      )}
+
       {stall && (
         <div className="card p-3 border-warn/40 bg-warn-soft mb-4 flex items-start gap-3">
           <span className="w-9 h-9 rounded-xl bg-warn text-ink-950 flex items-center justify-center shrink-0">
             <IconTrophy />
           </span>
-          <div className="text-sm">
+          <div className="flex-1 text-sm">
             <p className="font-semibold text-warn">סטטוס: תקוע</p>
             <p className="text-xs text-fg-muted mt-1">{stall.reason}</p>
-            <p className="text-xs mt-1">
-              <span className="text-fg-muted">המלצה: </span>
-              דה-לוד של ~10% (כ-{(stall.topWeight * 0.9).toFixed(1)}kg) או החלפת התרגיל לכמה שבועות.
-            </p>
+            {deload && (
+              <p className="text-xs mt-1">
+                <span className="text-fg-muted">דה-לוד: </span>
+                <span className="num">
+                  {deload.fromKg.toFixed(1)} → {deload.toKg.toFixed(1)} kg
+                </span>
+                <span className="text-fg-muted"> (–{deload.pct}%)</span>
+              </p>
+            )}
+            {subs.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                <span className="text-2xs text-fg-muted shrink-0">או החלף ל:</span>
+                {subs.map((sub) => (
+                  <span
+                    key={sub.id}
+                    className="chip border-info/40 text-info bg-info-soft truncate max-w-[10rem]"
+                  >
+                    {sub.name}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

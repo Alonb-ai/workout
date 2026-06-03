@@ -271,4 +271,8 @@ export interface StallFlag {
   lastThreeSessionIds: ID[];
   topWeight: number;
   reason: string; // Hebrew
+  /** Concrete deload suggestion (from → to, with %). null when math can't decide. */
+  deload?: { fromKg: number; toKg: number; pct: number };
+  /** Same-muscle-group alternatives (name + id) for substitution hints. */
+  substitutes?: { id: ID; name: string }[];
 }
