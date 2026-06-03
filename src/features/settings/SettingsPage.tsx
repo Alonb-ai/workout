@@ -222,6 +222,61 @@ export function SettingsPage() {
       </Section>
 
       <Section
+        title="תזכורת שבועית למדידת גוף"
+        description="התראה אחת בשבוע למדידת משקל ו-InBody — מדלגת אם כבר רשמת מדידה היום."
+      >
+        <div className="card p-3 space-y-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="w-5 h-5 accent-orange-500"
+              checked={settings.bodyReminderEnabled ?? false}
+              onChange={(e) =>
+                updateSettings({ bodyReminderEnabled: e.target.checked })
+              }
+            />
+            הפעל תזכורת שבועית
+          </label>
+          {settings.bodyReminderEnabled && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">יום</label>
+                <select
+                  className="input"
+                  value={settings.bodyReminderDow ?? 0}
+                  onChange={(e) =>
+                    updateSettings({ bodyReminderDow: Number(e.target.value) })
+                  }
+                >
+                  <option value={0}>ראשון</option>
+                  <option value={1}>שני</option>
+                  <option value={2}>שלישי</option>
+                  <option value={3}>רביעי</option>
+                  <option value={4}>חמישי</option>
+                  <option value={5}>שישי</option>
+                  <option value={6}>שבת</option>
+                </select>
+              </div>
+              <div>
+                <label className="label">שעה</label>
+                <input
+                  type="time"
+                  className="input"
+                  value={settings.bodyReminderTime ?? '09:00'}
+                  onChange={(e) =>
+                    updateSettings({ bodyReminderTime: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+          )}
+          <p className="text-2xs text-fg-muted">
+            דורש גם הפעלת "התראות תוספים" למעלה (משתמש באותו ערוץ הרשאה).
+          </p>
+        </div>
+      </Section>
+
+      <Section
         title="מלאי פלטות"
         description="לחישוב פלטות בלבד. כמות = מספר הפלטות הכולל שברשותך (לא זוגות)."
       >

@@ -10,6 +10,7 @@ import {
   IconClock,
   IconEdit,
   IconFlame,
+  IconList,
   IconPill,
   IconSettings,
   IconTrophy,
@@ -21,7 +22,7 @@ import { useStallFlags } from './useStallFlags';
 import { useTodaySupplements } from '../supplements/useTodaySupplements';
 import { computeWeeklyVolume } from './stats';
 import { motion } from 'framer-motion';
-import { format, parseISO, startOfMonth } from 'date-fns';
+import { format, differenceInDays, parseISO, startOfMonth } from 'date-fns';
 import { updateSettings } from '@/hooks/useSettings';
 import { useSettings } from '@/hooks/useSettings';
 
@@ -61,6 +62,10 @@ export function DashboardPage() {
     async () => (await db.workoutDrafts.toArray()).sort((a, b) => b.updatedAt - a.updatedAt),
     [],
   );
+  const latestBody = useLiveQuery(async () => {
+    const all = await db.bodyMeasurements.toArray();
+    return all.sort((a, b) => (a.date < b.date ? -1 : 1)).pop() ?? null;
+  }, []);
 
   if (!activePlan) {
     return (
@@ -301,6 +306,39 @@ export function DashboardPage() {
             ))}
           </ul>
         )}
+      </Section>
+
+      {/* Body measurement chip — surfaces the last weigh-in or nudges first entry */}
+      <Section title="גוף">
+        <Link
+          to="/body"
+          className="card p-3 flex items-center gap-3 hover:bg-ink-800 transition-colors"
+        >
+          <span className="w-10 h-10 rounded-xl bg-info-soft text-info flex items-center justify-center">
+            <IconList />
+          </span>
+          {latestBody ? (
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm">
+                <span className="num">{latestBody.bodyWeight.toFixed(1)} kg</span>
+                {latestBody.fatPct !== undefined && (
+                  <span className="text-fg-muted ms-2 text-xs">
+                    · <span className="num">{latestBody.fatPct}%</span> שומן
+                  </span>
+                )}
+              </p>
+              <p className="text-2xs text-fg-muted">
+                לפני {differenceInDays(new Date(), parseISO(latestBody.date))} ימים
+              </p>
+            </div>
+          ) : (
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm">הוסף מדידת גוף ראשונה</p>
+              <p className="text-2xs text-fg-muted">משקל · % שומן · מסת שריר</p>
+            </div>
+          )}
+          <span className="text-info text-xs font-semibold">פתח ←</span>
+        </Link>
       </Section>
 
       <div className="grid grid-cols-2 gap-3 mt-4">
