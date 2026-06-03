@@ -232,10 +232,28 @@ export function DashboardPage() {
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold truncate">{s.exerciseName}</p>
                     <p className="text-xs text-fg-muted">{s.reason}</p>
-                    <p className="text-xs mt-1">
-                      <span className="text-fg-muted">המלצה: </span>
-                      דה-לוד ~10% או החלפת התרגיל לכמה שבועות.
-                    </p>
+                    {s.deload && (
+                      <p className="text-xs mt-1">
+                        <span className="text-fg-muted">דה-לוד: </span>
+                        <span className="num">
+                          {s.deload.fromKg.toFixed(1)} → {s.deload.toKg.toFixed(1)} kg
+                        </span>
+                        <span className="text-fg-muted"> (–{s.deload.pct}%)</span>
+                      </p>
+                    )}
+                    {s.substitutes && s.substitutes.length > 0 && (
+                      <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                        <span className="text-2xs text-fg-muted shrink-0">או החלף ל:</span>
+                        {s.substitutes.slice(0, 2).map((sub) => (
+                          <span
+                            key={sub.id}
+                            className="chip border-info/40 text-info bg-info-soft truncate max-w-[10rem]"
+                          >
+                            {sub.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <button
                     className="btn-subtle !min-h-9 !px-2 text-xs"

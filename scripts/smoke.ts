@@ -13,7 +13,8 @@ import {
 } from '../src/utils/scoring.ts';
 import { computePlateLayout } from '../src/utils/plateMath.ts';
 import { detectStall, deloadWeight } from '../src/utils/stall.ts';
-import type { SetLog, ExerciseSessionStats } from '../src/types/index.ts';
+import { computeProgressionRate, suggestDeload, findSubstitutes } from '../src/utils/insights.ts';
+import type { SetLog, ExerciseSessionStats, Exercise } from '../src/types/index.ts';
 
 let pass = 0;
 let fail = 0;
@@ -222,6 +223,72 @@ eq(
 // deload weight: 100 → 90 → rounded to 90 with 2.5 increment
 eq(deloadWeight(100, 2.5), 90, 'deload 100 → 90');
 eq(deloadWeight(105, 2.5), Math.round(94.5 / 2.5) * 2.5, 'deload 105 with 2.5 increment');
+
+console.log('\n[Insights]');
+
+// Progression rate: from 100 to 110 over 60 days = 5 kg / month
+{
+  const a: ExerciseSessionStats = makeStat('a', 100, 1000);
+  a.date = '2026-01-01';
+  const b: ExerciseSessionStats = makeStat('b', 110, 1100);
+  b.date = '2026-03-02'; // exactly 60 days later
+  const p = computeProgressionRate([a, b]);
+  eq(p?.kgPerMonth, 5, 'progression rate 5 kg / month');
+  eq(p?.pctPerMonth, 5, 'progression rate 5% / month');
+  eq(p?.sampleSize, 2, 'progression sample size');
+}
+
+// Progression rate: < 2 samples → null
+eq(computeProgressionRate([makeStat('a', 100, 1000)]), null, 'progression null with 1 sample');
+
+// Progression rate: span too short → null
+{
+  const a: ExerciseSessionStats = makeStat('a', 100, 1000);
+  a.date = '2026-01-01';
+  const b: ExerciseSessionStats = makeStat('b', 110, 1100);
+  b.date = '2026-01-02';
+  eq(computeProgressionRate([a, b]), null, 'progression null with 1-day span');
+}
+
+// Deload suggestion: 100kg → 90kg
+{
+  const flat = [makeStat('1', 100, 1000), makeStat('2', 100, 1000), makeStat('3', 100, 1000)];
+  const d = suggestDeload(flat, 2.5);
+  eq(d?.fromKg, 100, 'deload from 100');
+  eq(d?.toKg, 90, 'deload to 90');
+  eq(d?.pct, 10, 'deload pct 10');
+}
+
+// Deload suggestion: too few sessions → null
+eq(suggestDeload([makeStat('1', 100, 1000)]), null, 'deload null with 1 session');
+
+// Find substitutes: same muscle group only, exclude source
+{
+  const t = Date.now();
+  const ex = (id: string, mg: string, name: string): Exercise => ({
+    id,
+    muscleGroupId: mg,
+    name,
+    targetSets: 3,
+    targetRepsMin: 6,
+    targetRepsMax: 8,
+    defaultRestSec: 120,
+    barWeight: 0,
+    order: 0,
+    createdAt: t,
+    updatedAt: t,
+  });
+  const all = [
+    ex('a', 'mg1', 'Bench Press'),
+    ex('b', 'mg1', 'Incline Press'),
+    ex('c', 'mg1', 'DB Press'),
+    ex('d', 'mg2', 'Squat'),
+  ];
+  const subs = findSubstitutes('a', all, 5);
+  eq(subs.map((s) => s.id), ['b', 'c'], 'subs limited to same muscle group');
+  eq(findSubstitutes('a', all, 1).length, 1, 'subs respect limit');
+  eq(findSubstitutes('missing', all).length, 0, 'subs empty for unknown id');
+}
 
 console.log(`\nResults: ${pass} passed, ${fail} failed.`);
 process.exit(fail === 0 ? 0 : 1);
