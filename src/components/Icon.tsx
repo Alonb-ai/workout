@@ -135,18 +135,6 @@ export const IconGrip = (p: IconProps) => (
   </Base>
 );
 
-export const IconArrowUp = (p: IconProps) => (
-  <Base {...p}>
-    <path d="M6 14l6-6 6 6" />
-  </Base>
-);
-
-export const IconArrowDown = (p: IconProps) => (
-  <Base {...p}>
-    <path d="M6 10l6 6 6-6" />
-  </Base>
-);
-
 export const IconArrowRight = (p: IconProps) => (
   <Base {...p}>
     <path d="M5 12h14M13 6l6 6-6 6" />
@@ -246,14 +234,3 @@ export const IconChevronDown = (p: IconProps) => (
   </Base>
 );
 
-export const IconPlay = (p: IconProps) => (
-  <Base {...p}>
-    <path d="M6 4v16l14-8z" />
-  </Base>
-);
-
-export const IconPause = (p: IconProps) => (
-  <Base {...p}>
-    <path d="M8 5h3v14H8zM13 5h3v14h-3z" />
-  </Base>
-);
