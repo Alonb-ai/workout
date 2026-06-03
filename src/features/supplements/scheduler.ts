@@ -1,6 +1,7 @@
 import { db } from '@/db/db';
 import { todayISO } from '@/utils/dates';
 import { showNotification } from '@/hooks/useNotifications';
+import type { Supplement } from '@/types';
 
 /**
  * In-app supplement notifier.
@@ -56,16 +57,36 @@ async function tick(): Promise<void> {
   if (!settings?.notificationsEnabled) return;
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
 
-  const date = todayISO();
   const sups = await db.supplements.filter((s) => s.active).toArray();
-  const dow = new Date().getDay();
   const now = new Date();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
   const notified = readNotified();
-  const logs = await db.supplementLogs
-    .where('date')
-    .equals(date)
-    .toArray();
+
+  // Today's window.
+  await checkDayWindow(sups, todayISO(), now.getDay(), currentMinutes, notified);
+
+  // Cross-midnight catch-up: if we're inside the 6-hour late window from
+  // some hour that ended yesterday (i.e., currentMinutes < 360), also scan
+  // yesterday's schedule with a clock that pretends we're at now+24h. This
+  // catches a 23:50 dose that the user missed because they closed the app.
+  if (currentMinutes < 6 * 60) {
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yIso = yesterday.toISOString().slice(0, 10);
+    await checkDayWindow(sups, yIso, yesterday.getDay(), currentMinutes + 1440, notified);
+  }
+
+  writeNotified(notified);
+}
+
+async function checkDayWindow(
+  sups: Supplement[],
+  date: string,
+  dow: number,
+  currentMinutes: number,
+  notified: NotifiedMap,
+): Promise<void> {
+  const logs = await db.supplementLogs.where('date').equals(date).toArray();
   const loggedSet = new Set(logs.map((l) => `${l.supplementId}|${l.scheduledTime}`));
 
   for (const sup of sups) {
@@ -92,5 +113,4 @@ async function tick(): Promise<void> {
       }
     }
   }
-  writeNotified(notified);
 }

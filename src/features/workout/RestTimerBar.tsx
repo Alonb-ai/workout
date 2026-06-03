@@ -24,7 +24,10 @@ function scheduleBeeps(msFromNow: number): {
   try {
     const Ctor: AudioCtor | undefined =
       window.AudioContext ?? (window as WindowWithWebkit).webkitAudioContext;
-    if (!Ctor) return null;
+    if (!Ctor) {
+      console.warn('Rest timer audio: AudioContext not available');
+      return null;
+    }
     const ctx = new Ctor();
     const start = ctx.currentTime + Math.max(0, msFromNow / 1000);
     const oscs: OscillatorNode[] = [];
@@ -45,7 +48,8 @@ function scheduleBeeps(msFromNow: number): {
     playPulse(start, 880);
     playPulse(start + 0.18, 988); // slight upward chirp = clearly two beeps
     return { ctx, oscs };
-  } catch {
+  } catch (err) {
+    console.warn('Rest timer audio scheduling failed:', err);
     return null;
   }
 }
@@ -59,7 +63,6 @@ export function GlobalRestTimerBar() {
   const stop = useTimerStore((s) => s.stop);
   const settings = useSettings();
   const scheduledRef = useRef<{ ctx: AudioContext; oscs: OscillatorNode[] } | null>(null);
-  const notifyTimeoutRef = useRef<number | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const vibrateTimeoutRef = useRef<number | null>(null);
   useTick(500);
@@ -80,10 +83,6 @@ export function GlobalRestTimerBar() {
         }
         scheduledRef.current.ctx.close().catch(() => {});
         scheduledRef.current = null;
-      }
-      if (notifyTimeoutRef.current !== null) {
-        window.clearTimeout(notifyTimeoutRef.current);
-        notifyTimeoutRef.current = null;
       }
       if (vibrateTimeoutRef.current !== null) {
         window.clearTimeout(vibrateTimeoutRef.current);
@@ -106,30 +105,12 @@ export function GlobalRestTimerBar() {
       scheduledRef.current = scheduleBeeps(msUntilEnd);
     }
 
-    // Best-effort backup: a setTimeout-driven vibration + SW notification.
-    // On mobile background this may fire late or not at all, but on desktop /
-    // foreground it gives a second sensory cue alongside the audio.
-    notifyTimeoutRef.current = window.setTimeout(() => {
-      notifyTimeoutRef.current = null;
+    // Vibration at end as a second cue. No SW notification — per user request
+    // the timer should only nudge while the app is in the foreground.
+    vibrateTimeoutRef.current = window.setTimeout(() => {
+      vibrateTimeoutRef.current = null;
       if ('vibrate' in navigator) {
         navigator.vibrate?.([80, 60, 80]);
-      }
-      if (
-        typeof Notification !== 'undefined' &&
-        Notification.permission === 'granted' &&
-        'serviceWorker' in navigator
-      ) {
-        navigator.serviceWorker.ready
-          .then((reg) =>
-            reg.showNotification('הזמן נגמר', {
-              body: label ? `סיום מנוחה · ${label}` : 'סיום מנוחה — הסט הבא 💪',
-              tag: 'iron-track-rest',
-              silent: false,
-              icon: '/icons/icon-192.png',
-              badge: '/icons/icon-192.png',
-            }),
-          )
-          .catch(() => {});
       }
     }, Math.max(0, msUntilEnd));
 
@@ -145,7 +126,7 @@ export function GlobalRestTimerBar() {
     }
 
     return cancel;
-  }, [endsAt, settings.restTimerSound, label]);
+  }, [endsAt, settings.restTimerSound]);
 
   return (
     <AnimatePresence>

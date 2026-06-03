@@ -4,6 +4,7 @@ import { AppShell } from './components/AppShell';
 import { ToastHost } from './components/ToastHost';
 import { ConfirmProvider } from './components/Confirm';
 import { seedIfNeeded, ensureSettings } from './db/seed';
+import { purgeStaleWorkoutDrafts } from './db/queries';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { WorkoutPage } from './features/workout/WorkoutPage';
 import { PlanPage } from './features/plan/PlanPage';
@@ -22,6 +23,9 @@ export function App() {
     (async () => {
       await ensureSettings();
       await seedIfNeeded();
+      // Wipe abandoned workout drafts (>24h old) — also catches orphans left
+      // by older versions of the autosave logic that didn't clean up on save.
+      await purgeStaleWorkoutDrafts(24);
       setReady(true);
       // Start in-app supplement scheduler (also handles delivering notifications).
       startSupplementScheduler();
