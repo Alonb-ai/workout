@@ -104,7 +104,7 @@ export function Modal({
               <div className="text-base font-semibold flex-1">{title}</div>
               {!hideClose && (
                 <button onClick={onClose} className="btn-icon" aria-label="סגור">
-                  <IconX />
+                  <IconX size={16} />
                 </button>
               )}
             </div>
