@@ -14,6 +14,13 @@ import {
 import { computePlateLayout } from '../src/utils/plateMath.ts';
 import { detectStall, deloadWeight } from '../src/utils/stall.ts';
 import { computeProgressionRate, suggestDeload, findSubstitutes } from '../src/utils/insights.ts';
+import {
+  matchStrengthLift,
+  assessStrength,
+  computeFFMI,
+  categorizeBodyFat,
+  standardsForSex,
+} from '../src/utils/benchmarks.ts';
 import type { SetLog, ExerciseSessionStats, Exercise } from '../src/types/index.ts';
 
 let pass = 0;
@@ -289,6 +296,74 @@ eq(suggestDeload([makeStat('1', 100, 1000)]), null, 'deload null with 1 session'
   eq(findSubstitutes('a', all, 1).length, 1, 'subs respect limit');
   eq(findSubstitutes('missing', all).length, 0, 'subs empty for unknown id');
 }
+
+console.log('\n[Benchmarks — strength]');
+
+eq(matchStrengthLift('Barbell Bench Press'), 'bench', 'match bench from full name');
+eq(matchStrengthLift('Incline DB Bench'), 'bench', 'match bench from variant');
+eq(matchStrengthLift('Back Squat'), 'squat', 'match squat');
+eq(matchStrengthLift('Romanian Deadlift'), 'deadlift', 'match deadlift');
+eq(matchStrengthLift('Overhead Press'), 'ohp', 'match ohp');
+eq(matchStrengthLift('Lateral Raise'), null, 'no match for non-big lift');
+
+// Male, BW=80kg, bench 1RM=100kg → ratio 1.25 → intermediate exactly
+{
+  const a = assessStrength('bench', 100, 80, 'male');
+  eq(a?.level, 'intermediate', 'bench 1.25× = intermediate');
+  eq(a?.nextLevel, 'advanced', 'bench next = advanced');
+  eq(a?.nextLevelKg, 120, 'bench next kg = 120');
+}
+
+// Sub-beginner case: bench 50kg @ 80kg BW = 0.625× → still beginner
+{
+  const a = assessStrength('bench', 50, 80, 'male');
+  eq(a?.level, 'beginner', 'sub-threshold defaults to beginner');
+}
+
+// Elite: bench 140 @ 80 = 1.75× exactly → elite, no next level
+{
+  const a = assessStrength('bench', 140, 80, 'male');
+  eq(a?.level, 'elite', 'bench 1.75× = elite');
+  eq(a?.nextLevel, null, 'elite has no next');
+  eq(a?.nextLevelKg, null, 'elite has no next kg');
+}
+
+// Female standards are 65% of male
+{
+  const f = standardsForSex('female');
+  const m = standardsForSex('male');
+  eq(f.bench.intermediate, Math.round(m.bench.intermediate * 0.65 * 100) / 100,
+    'female bench intermediate ≈ male × 0.65');
+}
+
+// Bad input returns null
+eq(assessStrength('bench', 0, 80, 'male'), null, 'zero 1RM → null');
+eq(assessStrength('bench', 100, 0, 'male'), null, 'zero bodyweight → null');
+
+console.log('\n[Benchmarks — FFMI]');
+
+// 80kg @ 15% fat @ 180cm male
+{
+  const r = computeFFMI(80, 15, 180, 'male');
+  // lean = 68, height² = 3.24, raw = 68/3.24 ≈ 20.99
+  // normalized = 20.99 + 6.1 × (1.8 - 1.8) = 20.99 → "above-average"
+  eq(r?.leanMass, 68, 'lean mass = 80 × (1 - 0.15)');
+  eq(r !== null && r.raw >= 20 && r.raw <= 22, true, 'raw FFMI in 20-22 range');
+  eq(r?.category, 'above-average', 'FFMI 21 = above-average');
+}
+
+// Out of range → null
+eq(computeFFMI(80, 70, 180), null, 'fat>60% rejected');
+eq(computeFFMI(80, 15, 100), null, 'height<120 rejected');
+
+console.log('\n[Benchmarks — body fat]');
+
+eq(categorizeBodyFat(10, 'male'), 'athlete', 'male 10% = athlete');
+eq(categorizeBodyFat(16, 'male'), 'fit', 'male 16% = fit');
+eq(categorizeBodyFat(22, 'male'), 'average', 'male 22% = average');
+eq(categorizeBodyFat(30, 'male'), 'high', 'male 30% = high');
+eq(categorizeBodyFat(18, 'female'), 'athlete', 'female 18% = athlete');
+eq(categorizeBodyFat(28, 'female'), 'average', 'female 28% = average');
 
 console.log(`\nResults: ${pass} passed, ${fail} failed.`);
 process.exit(fail === 0 ? 0 : 1);
