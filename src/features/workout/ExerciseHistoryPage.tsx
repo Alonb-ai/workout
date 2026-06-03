@@ -8,6 +8,12 @@ import { getExerciseHistory } from '@/db/queries';
 import { statsForExercise, compareToPrevious } from '@/utils/scoring';
 import { detectStall } from '@/utils/stall';
 import { computeProgressionRate, suggestDeload, findSubstitutes } from '@/utils/insights';
+import {
+  matchStrengthLift,
+  assessStrength,
+  STRENGTH_LEVEL_LABELS,
+} from '@/utils/benchmarks';
+import { useSettings } from '@/hooks/useSettings';
 import { formatHebDate } from '@/utils/dates';
 import {
   LineChart,
@@ -44,6 +50,20 @@ export function ExerciseHistoryPage() {
   const deload = stall ? suggestDeload(stats) : null;
   const allExercises = useLiveQuery(() => db.exercises.toArray(), []) ?? [];
   const subs = stall ? findSubstitutes(exercise.id, allExercises, 3) : [];
+
+  // Strength-standard benchmark — only for the big lifts and only when we have
+  // both a current bodyweight and the user's sex on file.
+  const settings = useSettings();
+  const liftKey = matchStrengthLift(exercise.name);
+  const bestEst1Rm = stats.reduce((m, s) => Math.max(m, s.est1RM), 0);
+  const latestBody = useLiveQuery(async () => {
+    const all = await db.bodyMeasurements.toArray();
+    return all.sort((a, b) => (a.date < b.date ? -1 : 1)).pop() ?? null;
+  }, []);
+  const strength =
+    liftKey && bestEst1Rm > 0 && latestBody && settings.bodyProfile?.sex
+      ? assessStrength(liftKey, bestEst1Rm, latestBody.bodyWeight, settings.bodyProfile.sex)
+      : null;
 
   const chartData = stats.map((s) => ({
     date: s.date,
@@ -84,6 +104,32 @@ export function ExerciseHistoryPage() {
               </span>
               <span className="text-fg-muted"> ({progression.pctPerMonth >= 0 ? '+' : ''}{progression.pctPerMonth}%)</span>
             </p>
+          </div>
+        </div>
+      )}
+
+      {strength && (
+        <div className="card p-3 border-info/30 bg-info-soft/40 mb-4 flex items-start gap-3">
+          <span className="w-9 h-9 rounded-xl bg-info text-ink-950 flex items-center justify-center shrink-0">
+            <IconTrophy />
+          </span>
+          <div className="flex-1 text-sm">
+            <p className="font-semibold">
+              סטנדרט כוח · {STRENGTH_LEVEL_LABELS[strength.level]}
+            </p>
+            <p className="text-xs text-fg-muted mt-0.5">
+              1RM משוער <span className="num text-fg">{strength.oneRm.toFixed(1)}kg</span> ·{' '}
+              משקל גוף <span className="num text-fg">{strength.bodyWeight.toFixed(1)}kg</span> ·{' '}
+              יחס <span className="num text-fg">×{strength.ratio}</span>
+            </p>
+            {strength.nextLevel && strength.nextLevelKg !== null && (
+              <p className="text-xs mt-1">
+                <span className="text-fg-muted">לרמת </span>
+                <span className="font-semibold">{STRENGTH_LEVEL_LABELS[strength.nextLevel]}</span>
+                <span className="text-fg-muted">: </span>
+                <span className="num">{strength.nextLevelKg}kg</span>
+              </p>
+            )}
           </div>
         </div>
       )}

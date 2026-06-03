@@ -16,13 +16,24 @@ import { EmptyState } from '@/components/EmptyState';
 import { confirmDialog } from '@/components/Confirm';
 import { IconChart, IconEdit, IconPlus, IconTrash } from '@/components/Icon';
 import { MeasurementModal } from './MeasurementModal';
+import { ProfileModal } from './ProfileModal';
 import { formatHebDate } from '@/utils/dates';
 import { format, parseISO, differenceInDays } from 'date-fns';
+import { useSettings } from '@/hooks/useSettings';
+import {
+  computeFFMI,
+  categorizeBodyFat,
+  isProfileComplete,
+  FFMI_CATEGORY_LABEL,
+  BODY_FAT_CATEGORY_LABEL,
+} from '@/utils/benchmarks';
 import type { BodyMeasurement } from '@/types';
 
 export function BodyPage() {
   const measurements = useLiveQuery(() => getBodyMeasurementsAsc(), []);
+  const settings = useSettings();
   const [modalOpen, setModalOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [editing, setEditing] = useState<BodyMeasurement | undefined>(undefined);
 
   const onAdd = () => {
@@ -49,6 +60,15 @@ export function BodyPage() {
   const prev = list[list.length - 2];
   const weightDelta =
     latest && prev ? Number((latest.bodyWeight - prev.bodyWeight).toFixed(1)) : null;
+  const profile = settings.bodyProfile;
+  const sex = profile?.sex ?? 'male';
+  const ffmi =
+    latest && latest.fatPct !== undefined && profile?.heightCm
+      ? computeFFMI(latest.bodyWeight, latest.fatPct, profile.heightCm, sex)
+      : null;
+  const fatCategory =
+    latest && latest.fatPct !== undefined ? categorizeBodyFat(latest.fatPct, sex) : null;
+  const profileComplete = isProfileComplete(profile);
 
   return (
     <div className="pt-3">
@@ -114,6 +134,57 @@ export function BodyPage() {
                   {differenceInDays(new Date(), parseISO(latest.date))} ימים
                 </p>
               </div>
+            </Section>
+          )}
+
+          {/* Profile + benchmarks: visible only if there's at least one
+              measurement to compare against. */}
+          {latest && (
+            <Section
+              title="פרופיל ובנצ'מרקים"
+              description={
+                profileComplete
+                  ? `יחס למתאמן ${sex === 'male' ? 'זכר' : 'נקבה'}${profile?.heightCm ? ` · ${profile.heightCm}cm` : ''}`
+                  : 'הזן גובה ומין כדי לראות FFMI וסטנדרטים'
+              }
+              action={
+                <button
+                  className="btn-ghost !min-h-9 !px-2 text-xs"
+                  onClick={() => setProfileOpen(true)}
+                >
+                  {profileComplete ? 'ערוך פרופיל' : 'הגדר פרופיל'}
+                </button>
+              }
+            >
+              <div className="grid grid-cols-2 gap-2">
+                {fatCategory && (
+                  <div className="card-flat p-3">
+                    <p className="text-2xs text-fg-muted">קטגוריית שומן</p>
+                    <p className="text-base font-bold">{BODY_FAT_CATEGORY_LABEL[fatCategory]}</p>
+                    <p className="text-2xs text-fg-muted num">{latest.fatPct}%</p>
+                  </div>
+                )}
+                {ffmi ? (
+                  <div className="card-flat p-3">
+                    <p className="text-2xs text-fg-muted">FFMI</p>
+                    <p className="text-base font-bold">
+                      <span className="num">{ffmi.normalized}</span>
+                    </p>
+                    <p className="text-2xs text-fg-muted">{FFMI_CATEGORY_LABEL[ffmi.category]}</p>
+                  </div>
+                ) : !profileComplete ? (
+                  <div className="card-flat p-3 border-dashed text-2xs text-fg-muted">
+                    FFMI דורש גובה + % שומן
+                  </div>
+                ) : latest.fatPct === undefined ? (
+                  <div className="card-flat p-3 border-dashed text-2xs text-fg-muted">
+                    FFMI דורש % שומן במדידה
+                  </div>
+                ) : null}
+              </div>
+              <p className="text-2xs text-fg-muted text-center mt-2">
+                סטנדרטי כוח לתרגילים גדולים מוצגים בדף ההיסטוריה של כל תרגיל.
+              </p>
             </Section>
           )}
 
@@ -232,6 +303,11 @@ export function BodyPage() {
           setEditing(undefined);
         }}
         editing={editing}
+      />
+      <ProfileModal
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+        initial={profile}
       />
     </div>
   );
