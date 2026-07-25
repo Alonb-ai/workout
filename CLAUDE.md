@@ -15,6 +15,9 @@ Iron Track is a **Hebrew (RTL) Progressive Web App** for personal strength train
 | `npm run preview` | Serve the production build locally. |
 | `npm run type-check` | TypeScript-only check (no emit). |
 | `npm run lint` | ESLint (TS/TSX) — kept light. |
+| `npm test` | Vitest: pure logic + Dexie persistence (IndexedDB via `fake-indexeddb`). |
+| `npm run test:e2e` | Playwright on WebKit at an iPhone viewport — reload-survival and one-tap logging. |
+| `npm run verify` | build + smoke + vitest in one shot. The pre-delivery gate. |
 | `npx tsx scripts/smoke.ts` | Run math/logic smoke tests for scoring, plate calc, stall detection. |
 
 ## Folder layout
@@ -38,12 +41,19 @@ src/
 │   ├── seed.ts              # First-run seed (the user's "עוצמה Upper/Lower" program)
 │   └── queries.ts           # Read-only helpers (exercise history, recent sessions, etc.)
 ├── store/                   # Zustand: toast, timer, transient workout-session UI
-├── utils/                   # Pure functions: scoring, plate math, stall detection, dates, cn
+├── utils/                   # Pure functions: scoring, progression, plate math, stall detection, dates, cn
 ├── types/                   # Domain types (Plan/Workout/Exercise/Session/SetLog/Supplement/…)
 └── assets/                  # (currently icons live in /public/icons)
 ```
 
-### Dexie entities (v1 schema)
+### Dexie versions
+
+v1 initial · v2 push fields · v3 `workoutDrafts` · v4 `bodyMeasurements` + profile ·
+**v5 backfills `barWeight` on barbell lifts** (`inferBarWeight` in `db/db.ts` — it
+returns `null` for "leave alone" and only names it is sure about get a bar, since
+a wrong bar weight makes the plate calculator state the wrong load).
+
+### Dexie entities
 
 | Table          | Primary key | Foreign keys / Notes                                                |
 | -------------- | ----------- | ------------------------------------------------------------------- |
@@ -69,7 +79,23 @@ src/
 4. **No native dialogs.** No `prompt` / `confirm` / `alert`. Use the in-app `Modal` + `confirmDialog()` (`src/components/Confirm.tsx`).
 5. **No `localStorage` for app data.** Everything user-relevant is in Dexie. `sessionStorage` is OK for transient UI state (the supplement scheduler uses it to dedupe notifications per session).
 6. **Mobile-first.** Touch targets ≥ 44×44 px. Number inputs use `inputmode="decimal"` (see `NumberInput`). Safe-area insets honored via `env(safe-area-inset-*)`.
-7. **Never lose data on refresh.** All persistence goes through Dexie. The active workout autosaves to `workoutDrafts` on every change (debounced 500 ms) and is restored on mount; the final `Session` is only written on Finish & Save, at which point the draft is deleted.
+7. **Never lose data — this is the top priority, above every other concern.** The owner's
+   worst experience with this app was losing sessions he forgot to save. The contract:
+   - The active workout autosaves to `workoutDrafts` (debounced 500 ms) and is restored on
+     mount. The final `Session` is written only on Finish & Save, which then deletes the draft.
+   - The draft is **also flushed immediately** on `visibilitychange`→hidden, on `pagehide`,
+     and on unmount. iOS can discard a backgrounded PWA tab, so a pending debounce is not a
+     safe place for the last set. `persistDraft` takes `(id, snapshot)` explicitly — never
+     read them from a closure, or a tab switch writes one workout's sets under another's key.
+   - **Inputs commit on every keystroke**, not on blur (`NumberInput`). iOS's decimal keypad
+     has no Return key and backgrounding fires no blur, so blur-only commits meant the flush
+     wrote a draft missing the number the user had just typed.
+   - **A draft containing completed sets is never auto-deleted, at any age.**
+     `purgeEmptyWorkoutDrafts` only removes drafts with nothing logged. Drafts dated before
+     today are surfaced on the dashboard as "אימון שלא נשמר" with a one-tap `commitDraft`.
+   - Export/import/wipe iterate `db.tables` rather than a hand-written list — every
+     hand-listed version silently forgot a table added by a later `.version()`.
+     `importAll` validates the payload **before** clearing anything.
 8. **Dexie schema is versioned.** When changing the shape: add a new `.version(N)` block in `src/db/db.ts` and write the migration. Never mutate an existing version.
 
 ## Scoring / progression rules (single source of truth)
@@ -86,13 +112,103 @@ src/
 
 All this logic lives in `src/utils/scoring.ts` and `src/utils/stall.ts`. Run `npx tsx scripts/smoke.ts` after changing it.
 
+## Progressive overload (the app's job, not the user's)
+
+`src/utils/progression.ts` decides **what to lift today** for each exercise. It is the
+difference between a logbook and a coach, so treat it as load-bearing.
+
+- **Double progression.** Hold the weight until every target set is completed at the
+  **top** of the rep range, then add one increment and drop back to the bottom.
+- **The weakest set at the top weight decides.** `8, 8, 7` in a 6–8 range has not earned
+  an increase. Warm-up sets below the top weight are ignored entirely.
+- **Increment** = `Exercise.incrementKg` if set → else 2.5 kg for machines → else the
+  smallest **owned plate pair** (`smallestPairIncrement`, i.e. 2 × the smallest plate).
+  `incrementKg` is an optional, non-indexed field: no Dexie migration needed to add it.
+- **Stall outranks hold.** A lift flagged by `detectStall` gets a deload prescription
+  instead of another identical session — holding is what caused the stall.
+- **0 kg means bodyweight**, and reps are the only progress signal there. Never let the
+  engine turn a 0 kg top set into "load 2.5 kg".
+- **A first-ever session with no `seedWeight` has no prescription at all** — no ghost
+  reps, and the ✓ button stays disabled, so one tap can't log a 0 kg set.
+
+The prescription reaches the UI as `DraftExercise.prescription`, is shown as the coloured
+strip at the top of each `ExerciseCard`, and is written into every set row as ghost text.
+**Tapping ✓ on an untouched row adopts the ghost values as real numbers** — that one-tap
+path is the primary way sets get logged, so don't break it. Anything typed always wins.
+
+Covered by `src/utils/progression.test.ts` and the E2E specs; run both after touching it.
+
+## Design system
+
+Tokens live in `tailwind.config.js`, primitives in `src/index.css` under `@layer
+components`. Reference implementations: the `PrescriptionStrip` in
+`features/workout/ExerciseCard.tsx` and the hero card + `Stat` tile in
+`features/dashboard/DashboardPage.tsx`. Match those rather than inventing a
+second language.
+
+**Elevation carries the meaning.** A surface is either lit from above or carved in:
+
+| Class | Use |
+| --- | --- |
+| `.card` / `.card-flat` | Raised. Hairline top highlight + drop shadow. Content sits on it. |
+| `.field` | Recessed: `bg-ink-950` — **darker than the card containing it** — plus an inset shadow. Every input, select, chip track and progress groove. |
+| `.card-hero` | The one primary action on a screen, if it has one. Accent gradient bleeding from a corner. At most one per screen. |
+
+An input that is *lighter* than its container reads as a button. That inversion
+is most of what makes the app feel finished.
+
+**Type.** `.eyebrow` for the small label above a value or section. `.num-display`
+for a number that IS the message (a prescribed weight, a score, a count) — mono,
+tabular, tight. `.num` for numbers inside running text. Never render a raw ISO
+date as a value; use the `formatHebDate*` helpers.
+
+**Colour.** Orange *text* on dark uses `text-accent-text` (#ffa257) — the pure
+accent vibrates at small sizes. Status colours go on as a very low-alpha tint
+(`bg-good/[0.06]`) plus a 3px full-strength rule on the leading edge; never fill
+a block with a status colour, it out-shouts the content it belongs to.
+Destructive controls are `text-fg-ghost hover:text-bad` — red when you reach for
+it, not while you read.
+
+**Fonts are bundled** (`@fontsource-variable/*`, imported in `main.tsx`), not
+fetched from a CDN. An offline-first PWA that loses its typography the moment
+the gym wifi drops is not offline-first. Never reintroduce a `<link>` to
+fonts.googleapis.com.
+
+**Motion** is short (`duration: 0.18`) and cheap. Never put framer-motion's
+`layout` prop on a component that re-renders while the user types — it made
+framer measure and tween all six exercise cards on every keystroke.
+
+**Accessible names are an API.** 51 Playwright tests find controls by their
+Hebrew `aria-label` and visible button text. Restyling is free; renaming a
+control is a breaking change.
+
 ## Verification ritual (do this before declaring any task done)
 
-1. `npm run build` — must succeed (TS strict + Vite both clean).
-2. `npx tsx scripts/smoke.ts` — must report `0 failed`.
+1. `npm run verify` — build + smoke + vitest. All three must be clean.
+2. `npm run test:e2e` — Playwright, must be all green. It is the only thing that proves
+   IndexedDB actually survives a reload.
 3. `npm run dev` and exercise the actual flow being changed. Console must be clean (no warnings).
 4. Re-check the self-test checklist items in the README that the change touches (data persistence, plate calc edge cases, RTL, PWA install, etc.).
 5. Never deliver red.
+
+### Never clamp a user's number into validity
+
+`NumberInput` clamps to `min`/`max` **on blur**, and pressing a modal's save
+button blurs first — so a `min` on an input is not validation, it is a silent
+rewrite that reaches the DB before any guard runs. A typed `0` was stored as a
+real 20.0 kg body measurement, with a success toast. Where a wrong value must be
+refused rather than corrected (measurements, anything the user is asserting as
+fact), leave `min`/`max` off the input and range-check in the save handler with
+a specific Hebrew message.
+
+### Hooks rule (learned the hard way)
+
+There is **no error boundary** in this app, so a React invariant violation unmounts the
+whole thing to a white screen. `useLiveQuery` always returns `undefined` on the first
+render, so **every hook must be called before any conditional return** — an early `if
+(!x) return …` placed above later hooks changes the hook count between render 1 and 2 and
+crashes the app on every visit. Where "loading" and "not found" must be told apart, have
+the query return `?? null`: `undefined` = loading, `null` = missing.
 
 ## Gotchas & decisions
 

@@ -30,6 +30,9 @@ export default {
           hover: '#ff8a35',
           soft: '#ff7a1a22',
           ring: '#ff7a1a55',
+          // Legible orange for text on a dark surface — the pure accent is too
+          // hot at small sizes and vibrates against #06080b.
+          text: '#ffa257',
         },
         good: {
           DEFAULT: '#3ddc84',
@@ -49,17 +52,22 @@ export default {
         },
       },
       fontFamily: {
+        // "Variable" suffix is the family name @fontsource-variable registers.
         sans: [
+          'Heebo Variable',
           'Heebo',
-          'Assistant',
-          'Rubik',
           'system-ui',
           '-apple-system',
           'BlinkMacSystemFont',
-          'Segoe UI',
           'sans-serif',
         ],
-        mono: ['"JetBrains Mono"', '"Roboto Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+        mono: [
+          'JetBrains Mono Variable',
+          '"JetBrains Mono"',
+          'ui-monospace',
+          'SFMono-Regular',
+          'monospace',
+        ],
       },
       fontSize: {
         '2xs': ['0.6875rem', '0.95rem'],
@@ -70,27 +78,24 @@ export default {
         '3xl': '1.5rem',
       },
       boxShadow: {
-        card: '0 1px 0 0 #ffffff0a inset, 0 8px 24px -12px #00000080',
+        // A card is LIT from above: a hairline highlight on its top edge plus a
+        // soft drop shadow. A field is CARVED IN: the highlight moves to the
+        // bottom edge and the shadow goes inside. That inversion is what makes
+        // "tap here to type" read without a single extra pixel of chrome.
+        card: '0 1px 0 0 #ffffff0d inset, 0 10px 30px -16px #000000cc',
+        raised: '0 1px 0 0 #ffffff12 inset, 0 16px 40px -20px #000000e6',
+        field: '0 1px 2px 0 #00000080 inset, 0 -1px 0 0 #ffffff08 inset',
         soft: '0 1px 2px #0006, 0 1px 0 #ffffff0a inset',
         glow: '0 0 0 4px #ff7a1a33',
+        'accent-lift': '0 6px 20px -8px #ff7a1a66',
       },
       keyframes: {
-        fadeIn: {
-          '0%': { opacity: '0' },
-          '100%': { opacity: '1' },
-        },
-        slideUp: {
-          '0%': { transform: 'translateY(12px)', opacity: '0' },
-          '100%': { transform: 'translateY(0)', opacity: '1' },
-        },
         pulseRing: {
           '0%': { boxShadow: '0 0 0 0 #ff7a1a66' },
           '100%': { boxShadow: '0 0 0 12px #ff7a1a00' },
         },
       },
       animation: {
-        fadeIn: 'fadeIn 220ms ease-out',
-        slideUp: 'slideUp 260ms cubic-bezier(0.2, 0.7, 0.2, 1)',
         pulseRing: 'pulseRing 1.6s ease-out infinite',
       },
     },

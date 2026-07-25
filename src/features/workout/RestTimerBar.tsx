@@ -1,10 +1,11 @@
 import { useTimerStore } from '@/store/timer';
 import { useTick } from '@/hooks/useTick';
 import { formatHM } from '@/utils/dates';
-import { IconClock, IconPlus, IconMinus, IconX } from '@/components/Icon';
+import { IconPlus, IconMinus, IconX } from '@/components/Icon';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useRef } from 'react';
 import { useSettings } from '@/hooks/useSettings';
+import { cn } from '@/utils/cn';
 
 type AudioCtor = typeof AudioContext;
 interface WindowWithWebkit extends Window {
@@ -112,6 +113,13 @@ export function GlobalRestTimerBar() {
       if ('vibrate' in navigator) {
         navigator.vibrate?.([80, 60, 80]);
       }
+      // The store keeps `endsAt` set after the countdown ends (the bar stays up
+      // showing 0:00), so this effect never re-runs — release the screen lock
+      // here or it stays held until the user leaves the screen entirely.
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
     }, Math.max(0, msUntilEnd));
 
     // Keep the screen on while the rest timer is counting down. The user is
@@ -128,6 +136,8 @@ export function GlobalRestTimerBar() {
     return cancel;
   }, [endsAt, settings.restTimerSound]);
 
+  const done = remaining === 0;
+
   return (
     <AnimatePresence>
       {endsAt && (
@@ -140,52 +150,63 @@ export function GlobalRestTimerBar() {
           style={{ bottom: 'calc(60px + env(safe-area-inset-bottom))' }}
         >
           <div className="max-w-2xl mx-auto px-3">
+            {/* Read from two metres away, between sets: the remaining time is the
+                whole message, so it is set as a display figure and everything
+                else — label, controls, groove — recedes around it.
+                The three controls stay direct children of this row: an E2E spec
+                identifies the bar as the innermost div holding the skip button
+                and asserts the lift name and clock read inside it. */}
             <div
-              className={`pointer-events-auto bg-ink-800/95 backdrop-blur border ${
-                remaining === 0 ? 'border-good' : 'border-line'
-              } rounded-2xl shadow-card overflow-hidden`}
+              className={cn(
+                'pointer-events-auto card overflow-hidden bg-ink-850/95 backdrop-blur shadow-raised',
+                done && 'border-good/50',
+              )}
             >
-              <div className="px-3 py-2.5 flex items-center gap-3">
-                <span
-                  className={`w-9 h-9 rounded-xl flex items-center justify-center ${
-                    remaining === 0 ? 'bg-good text-ink-950' : 'bg-accent text-ink-950'
-                  }`}
-                >
-                  <IconClock />
-                </span>
+              <div className="ps-4 pe-2 py-1.5 flex items-center gap-2">
                 <div className="flex-1 min-w-0">
-                  <p className="text-2xs text-fg-muted">
-                    {remaining === 0 ? 'מנוחה הסתיימה' : label || 'מנוחה'}
+                  <p className={cn('eyebrow truncate', done && 'text-good')}>
+                    {done ? 'מנוחה הסתיימה' : label || 'מנוחה'}
                   </p>
-                  <p className="num text-xl font-bold">{formatHM(remaining)}</p>
+                  <p
+                    className={cn(
+                      'num-display text-[2.5rem] leading-none mt-0.5',
+                      done ? 'text-good' : 'text-fg',
+                    )}
+                  >
+                    {formatHM(remaining)}
+                  </p>
                 </div>
                 <button
-                  className="btn-icon !min-w-9 !min-h-9 bg-ink-700"
+                  className="btn-icon bg-ink-800 border border-line text-fg"
                   aria-label="הוסף 15 שניות"
                   onClick={() => add(15)}
                 >
-                  <IconPlus size={18} />
+                  <IconPlus size={20} />
                 </button>
                 <button
-                  className="btn-icon !min-w-9 !min-h-9 bg-ink-700"
+                  className="btn-icon bg-ink-800 border border-line text-fg"
                   aria-label="הפחת 15 שניות"
                   onClick={() => add(-15)}
                 >
-                  <IconMinus size={18} />
+                  <IconMinus size={20} />
                 </button>
                 <button
-                  className="btn-icon !min-w-9 !min-h-9 bg-ink-700"
+                  className="btn-icon bg-ink-800 border border-line text-fg-muted"
                   aria-label="דלג"
                   onClick={() => stop()}
                 >
-                  <IconX size={18} />
+                  <IconX size={20} />
                 </button>
               </div>
-              <div className="h-1 bg-ink-900">
+              {/* A carved rail along the bottom edge of the bar. Full-bleed
+                  rather than inset: the whole bar has to stay under 80px so it
+                  never covers content that `.pb-tabbar-timer` already paid for. */}
+              <div className="h-1.5 bg-ink-950 shadow-field">
                 <div
-                  className={`h-full transition-[width] duration-500 ${
-                    remaining === 0 ? 'bg-good' : 'bg-accent'
-                  }`}
+                  className={cn(
+                    'h-full rounded-e-full transition-[width] duration-500',
+                    done ? 'bg-good' : 'bg-accent',
+                  )}
                   style={{ width: `${pct * 100}%` }}
                 />
               </div>

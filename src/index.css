@@ -43,9 +43,41 @@
     }
   }
 
+  /* Hebrew headings set tighter — Heebo's default tracking is loose at display
+     sizes and the headings read as separate words instead of one phrase. */
+  h1, h2 {
+    letter-spacing: -0.02em;
+  }
+
   /* Mono for numeric tabular data */
   .num {
     @apply font-mono tabular-nums;
+  }
+  /* A number that IS the message (a prescribed weight, a score). Tighter and
+     heavier than body mono so it reads as a figure, not as data. */
+  .num-display {
+    @apply font-mono tabular-nums font-semibold;
+    letter-spacing: -0.03em;
+  }
+
+  /* Native date/time pickers: keep the OS picker (it is better than anything we
+     would build) but stop it looking like a 1998 form control. The indicator is
+     pulled to the correct side for RTL and tinted to the accent. */
+  input[type='date'],
+  input[type='time'] {
+    @apply text-fg;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  input[type='date']::-webkit-calendar-picker-indicator,
+  input[type='time']::-webkit-calendar-picker-indicator {
+    filter: invert(62%) sepia(72%) saturate(2200%) hue-rotate(348deg) brightness(102%) contrast(101%);
+    opacity: 0.85;
+    cursor: pointer;
+  }
+  input[type='date']::-webkit-date-and-time-value,
+  input[type='time']::-webkit-date-and-time-value {
+    text-align: start;
   }
 
   /* Hide scrollbars on horizontal tab strips */
@@ -63,36 +95,52 @@
     @apply bg-ink-850 border border-line rounded-2xl shadow-card;
   }
   .card-flat {
-    @apply bg-ink-850 border border-line rounded-2xl;
+    @apply bg-ink-850 border border-line-muted rounded-2xl;
+  }
+  /* The one card that is the screen's primary action. Lifted further, with the
+     accent bleeding in from the edge rather than filling the whole surface. */
+  .card-hero {
+    @apply relative overflow-hidden rounded-3xl border border-accent/25 bg-ink-850 shadow-raised;
+    background-image: radial-gradient(120% 100% at 100% 0%, #ff7a1a1f 0%, transparent 60%);
   }
   .chip {
     @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium border;
   }
+  /* Section eyebrow: small, spaced, quiet. Lets the content below carry the weight. */
+  .eyebrow {
+    @apply text-2xs font-semibold uppercase tracking-[0.14em] text-fg-dim;
+  }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 select-none font-medium rounded-xl
-           transition-[transform,background,color,box-shadow] active:scale-[0.98]
+    @apply inline-flex items-center justify-center gap-2 select-none font-semibold rounded-xl
+           transition-[transform,background,color,box-shadow] duration-150 active:scale-[0.97]
            disabled:opacity-40 disabled:pointer-events-none;
     min-height: 44px;
     padding-inline: 1rem;
   }
   .btn-primary {
-    @apply btn bg-accent text-ink-950 hover:bg-accent-hover shadow-soft;
+    @apply btn bg-accent text-ink-950 hover:bg-accent-hover shadow-accent-lift;
   }
   .btn-ghost {
     @apply btn bg-ink-800 text-fg hover:bg-ink-700 border border-line;
   }
   .btn-subtle {
-    @apply btn text-fg-muted hover:text-fg hover:bg-ink-800;
+    @apply btn font-medium text-fg-muted hover:text-fg hover:bg-ink-800;
   }
   .btn-icon {
     @apply inline-flex items-center justify-center rounded-xl text-fg-muted hover:text-fg
-           hover:bg-ink-800 transition-colors;
+           hover:bg-ink-800 active:scale-95 transition-[transform,color,background] duration-150;
     min-width: 44px;
     min-height: 44px;
   }
+  /* Recessed well. Deliberately DARKER than the card it sits in — an input that
+     is lighter than its container reads as a button, not a field. */
+  .field {
+    @apply bg-ink-950 border border-line-muted rounded-xl shadow-field
+           transition-[border-color,box-shadow] duration-150;
+  }
   .input {
-    @apply w-full bg-ink-900 border border-line rounded-xl px-3 py-2.5 text-fg
-           placeholder:text-fg-ghost focus:border-accent transition-colors;
+    @apply field w-full px-3 py-2.5 text-fg placeholder:text-fg-ghost
+           focus:border-accent/70 focus:shadow-glow;
     min-height: 44px;
   }
   .label {
@@ -101,16 +149,22 @@
   .divider {
     @apply h-px bg-line my-3;
   }
+  /* Segmented control — one recessed track, the active pill riding on top. */
+  .seg {
+    @apply field inline-flex items-center gap-1 p-1 rounded-full;
+  }
   .pill-tab {
-    @apply px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap
-           text-fg-muted hover:text-fg transition-colors border border-transparent;
+    @apply px-3.5 py-1.5 rounded-full text-sm font-semibold whitespace-nowrap
+           text-fg-muted hover:text-fg border border-transparent
+           transition-[background,color,box-shadow] duration-150;
   }
   .pill-tab[data-active='true'] {
-    @apply bg-accent text-ink-950 border-accent;
+    @apply bg-accent text-ink-950 border-accent shadow-accent-lift;
   }
   .safe-top { padding-top: calc(0.5rem + var(--safe-top)); }
-  .safe-bottom { padding-bottom: calc(0.5rem + var(--safe-bottom)); }
   .pb-tabbar { padding-bottom: calc(72px + var(--safe-bottom)); }
+  /* Tab bar + the floating rest timer bar above it. */
+  .pb-tabbar-timer { padding-bottom: calc(140px + var(--safe-bottom)); }
 }
 
 /* Recharts text in RTL */

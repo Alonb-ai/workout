@@ -59,6 +59,13 @@ export interface Exercise {
   order: number;
   /** Seed starting weight (informational only — used by logger when no prior session). */
   seedWeight?: number;
+  /**
+   * Smallest weight step this exercise can actually be loaded with, for the
+   * progression engine. Optional: barbells fall back to the smallest owned
+   * plate pair, machines to 2.5 kg. Set it when a stack jumps in 5 kg.
+   * Not indexed — no Dexie migration needed to add it.
+   */
+  incrementKg?: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -81,6 +88,13 @@ export interface Session {
   totalVolume?: number;
   prCount?: number;
   completionPct?: number;
+  /**
+   * Target sets across the whole workout as planned that day, including
+   * exercises that were skipped. Skipped exercises write no ExerciseLog, so
+   * this cannot be re-derived afterwards — without it, re-scoring a session
+   * later would silently raise its completion. Not indexed; no migration.
+   */
+  plannedSets?: number;
 }
 
 export interface ExerciseLog {

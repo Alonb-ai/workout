@@ -1,4 +1,5 @@
-import type { ID, ExerciseLog, SetLog, ISODate, Timestamp } from '@/types';
+import type { ID, ISODate, Timestamp } from '@/types';
+import type { Prescription } from '@/utils/progression';
 
 /** In-memory representation of a set being logged. */
 export interface DraftSet {
@@ -26,13 +27,18 @@ export interface DraftExercise {
   defaultRestSec: number;
   notes?: string;
   seedWeight?: number;
+  /** Per-exercise loading step; see Exercise.incrementKg. */
+  incrementKg?: number;
   order: number;
   sets: DraftSet[];
-}
-
-export interface BuiltSessionData {
-  exerciseLog: Omit<ExerciseLog, 'sessionId'>;
-  sets: Omit<SetLog, 'sessionId' | 'exerciseLogId'>[];
+  /**
+   * What the app says to lift today. Derived from history when the draft is
+   * built; it rides along into the autosaved draft so a restored session still
+   * shows its coaching, rather than being recomputed against a moving target.
+   */
+  prescription?: Prescription;
+  /** Compact recap of the last session, e.g. "40×8,8,7". */
+  lastSummary?: string;
 }
 
 /**

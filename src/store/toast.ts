@@ -6,9 +6,6 @@ export interface Toast {
   id: string;
   kind: ToastKind;
   message: string;
-  // optional action label & callback
-  actionLabel?: string;
-  onAction?: () => void;
   timeoutMs: number;
 }
 
@@ -22,7 +19,7 @@ export const useToastStore = create<ToastStore>((set) => ({
   toasts: [],
   push: (t) => {
     const id = Math.random().toString(36).slice(2);
-    const item: Toast = { id, timeoutMs: 3200, ...t };
+    const item: Toast = { ...t, id, timeoutMs: t.timeoutMs ?? 3200 };
     set((s) => ({ toasts: [...s.toasts, item] }));
     if (item.timeoutMs > 0) {
       setTimeout(() => {

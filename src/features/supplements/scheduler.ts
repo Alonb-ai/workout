@@ -1,5 +1,6 @@
 import { db } from '@/db/db';
 import { todayISO } from '@/utils/dates';
+import { format } from 'date-fns';
 import { showNotification } from '@/hooks/useNotifications';
 import type { Supplement } from '@/types';
 
@@ -72,7 +73,8 @@ async function tick(): Promise<void> {
   if (currentMinutes < 6 * 60) {
     const yesterday = new Date(now);
     yesterday.setDate(yesterday.getDate() - 1);
-    const yIso = yesterday.toISOString().slice(0, 10);
+    // Local date — toISOString() would shift another day back before 03:00 in UTC+3.
+    const yIso = format(yesterday, 'yyyy-MM-dd');
     await checkDayWindow(sups, yIso, yesterday.getDay(), currentMinutes + 1440, notified);
   }
 
@@ -141,7 +143,9 @@ async function checkDayWindow(
       try {
         await showNotification(`תזכורת תוסף: ${sup.name}`, {
           body: `${sup.dose} ${sup.unit}${sup.withFood ? ' · עם אוכל' : ''} (תזמון ${time})`,
-          tag: key,
+          // Same tag the Worker uses (worker/src/index.ts) so the OS replaces the
+          // background push for this dose instead of stacking a second banner.
+          tag: `iron-track:${sup.name}:${time}`,
           data: { supplementId: sup.id, time },
         });
         notified[key] = Date.now();

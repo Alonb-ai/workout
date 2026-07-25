@@ -1,143 +1,87 @@
 import { db } from '@/db/db';
 import { ensureSettings } from '@/db/seed';
 
-interface ExportPayload {
+/**
+ * Backup/restore/wipe are all driven off `db.tables` rather than a hand-written
+ * list of table names. Every hand-listed version of this file silently forgot a
+ * table that a later `.version()` had added — body measurements were missing
+ * from every export ever taken, and "reset all data" left them behind.
+ */
+export interface ExportPayload {
+  /** Dexie schema version the backup was taken at. */
   version: number;
   exportedAt: number;
-  plans: unknown[];
-  workouts: unknown[];
-  muscleGroups: unknown[];
-  exercises: unknown[];
-  sessions: unknown[];
-  exerciseLogs: unknown[];
-  setLogs: unknown[];
-  supplements: unknown[];
-  supplementLogs: unknown[];
-  settings: unknown[];
+  /** Table name → rows. Covers every table in the schema, always. */
+  tables: Record<string, unknown[]>;
 }
 
 export async function exportAll(): Promise<ExportPayload> {
-  const [
-    plans,
-    workouts,
-    muscleGroups,
-    exercises,
-    sessions,
-    exerciseLogs,
-    setLogs,
-    supplements,
-    supplementLogs,
-    settings,
-  ] = await Promise.all([
-    db.plans.toArray(),
-    db.workouts.toArray(),
-    db.muscleGroups.toArray(),
-    db.exercises.toArray(),
-    db.sessions.toArray(),
-    db.exerciseLogs.toArray(),
-    db.setLogs.toArray(),
-    db.supplements.toArray(),
-    db.supplementLogs.toArray(),
-    db.settings.toArray(),
-  ]);
-
+  const entries = await Promise.all(
+    db.tables.map(async (t) => [t.name, await t.toArray()] as const),
+  );
   return {
-    version: 1,
+    version: db.verno,
     exportedAt: Date.now(),
-    plans,
-    workouts,
-    muscleGroups,
-    exercises,
-    sessions,
-    exerciseLogs,
-    setLogs,
-    supplements,
-    supplementLogs,
-    settings,
+    tables: Object.fromEntries(entries),
   };
 }
 
-function asArray(v: unknown): unknown[] {
-  return Array.isArray(v) ? v : [];
+/**
+ * Pull the table rows out of a backup file. Accepts the current
+ * `{ tables: { … } }` shape and the older flat one (`{ plans: [], … }`) so
+ * backups taken before this change still restore.
+ */
+function readTables(raw: unknown): Record<string, unknown[]> {
+  const data = (raw ?? {}) as Record<string, unknown>;
+  const src = (
+    data.tables && typeof data.tables === 'object' ? data.tables : data
+  ) as Record<string, unknown>;
+  const out: Record<string, unknown[]> = {};
+  for (const t of db.tables) {
+    const rows = src[t.name];
+    if (Array.isArray(rows)) out[t.name] = rows;
+  }
+  return out;
+}
+
+/** Row counts per table, for the pre-import confirmation screen. */
+export function summarizeBackup(raw: unknown): Record<string, number> {
+  const tables = readTables(raw);
+  return Object.fromEntries(Object.entries(tables).map(([k, v]) => [k, v.length]));
 }
 
 export async function importAll(rawData: unknown): Promise<void> {
-  const data = (rawData ?? {}) as Record<string, unknown>;
-  await db.transaction(
-    'rw',
-    [
-      db.plans,
-      db.workouts,
-      db.muscleGroups,
-      db.exercises,
-      db.sessions,
-      db.exerciseLogs,
-      db.setLogs,
-      db.supplements,
-      db.supplementLogs,
-      db.settings,
-    ],
-    async () => {
-      await Promise.all([
-        db.plans.clear(),
-        db.workouts.clear(),
-        db.muscleGroups.clear(),
-        db.exercises.clear(),
-        db.sessions.clear(),
-        db.exerciseLogs.clear(),
-        db.setLogs.clear(),
-        db.supplements.clear(),
-        db.supplementLogs.clear(),
-        db.settings.clear(),
-      ]);
-      // Use casts to internal Dexie types via `as never` — payloads are validated
-      // by the shape they were exported with from this same app.
-      await db.plans.bulkAdd(asArray(data.plans) as never);
-      await db.workouts.bulkAdd(asArray(data.workouts) as never);
-      await db.muscleGroups.bulkAdd(asArray(data.muscleGroups) as never);
-      await db.exercises.bulkAdd(asArray(data.exercises) as never);
-      await db.sessions.bulkAdd(asArray(data.sessions) as never);
-      await db.exerciseLogs.bulkAdd(asArray(data.exerciseLogs) as never);
-      await db.setLogs.bulkAdd(asArray(data.setLogs) as never);
-      await db.supplements.bulkAdd(asArray(data.supplements) as never);
-      await db.supplementLogs.bulkAdd(asArray(data.supplementLogs) as never);
-      const settingsArr = asArray(data.settings);
-      if (settingsArr.length > 0) {
-        await db.settings.bulkAdd(settingsArr as never);
-      }
-    },
-  );
+  const tables = readTables(rawData);
+
+  // Validate BEFORE touching the database. The old version cleared all ten
+  // tables first and coerced anything unrecognised to [], so importing a
+  // random JSON file wiped everything and reported success.
+  if (!tables.plans || !tables.exercises || !tables.sessions) {
+    throw new Error('הקובץ אינו גיבוי של Iron Track');
+  }
+  if (Object.values(tables).every((rows) => rows.length === 0)) {
+    throw new Error('הגיבוי ריק — לא בוצע שינוי');
+  }
+
+  await db.transaction('rw', db.tables, async () => {
+    for (const t of db.tables) {
+      await t.clear();
+      const rows = tables[t.name];
+      if (rows && rows.length > 0) await t.bulkAdd(rows as never);
+    }
+  });
   await ensureSettings();
+  // A backup without a `settings` row (older or hand-edited file) would leave
+  // `seeded: false`, and the next boot would seed a SECOND copy of the default
+  // program on top of the imported one — two plans, both flagged active.
+  // Importing plans is proof enough that this database is already set up.
+  if ((tables.plans?.length ?? 0) > 0) {
+    await db.settings.update('singleton', { seeded: true });
+  }
 }
 
 export async function wipeAll(): Promise<void> {
-  await db.transaction(
-    'rw',
-    [
-      db.plans,
-      db.workouts,
-      db.muscleGroups,
-      db.exercises,
-      db.sessions,
-      db.exerciseLogs,
-      db.setLogs,
-      db.supplements,
-      db.supplementLogs,
-      db.settings,
-    ],
-    async () => {
-      await Promise.all([
-        db.plans.clear(),
-        db.workouts.clear(),
-        db.muscleGroups.clear(),
-        db.exercises.clear(),
-        db.sessions.clear(),
-        db.exerciseLogs.clear(),
-        db.setLogs.clear(),
-        db.supplements.clear(),
-        db.supplementLogs.clear(),
-        db.settings.clear(),
-      ]);
-    },
-  );
+  await db.transaction('rw', db.tables, async () => {
+    for (const t of db.tables) await t.clear();
+  });
 }

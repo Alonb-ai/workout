@@ -21,7 +21,12 @@ interface ExerciseSeed {
   restSec?: number;
   isMachine?: boolean;
   seedWeight?: number;
+  /** Bar/handle weight — plate-calculator only, never added to a logged value. */
+  barWeight?: number;
 }
+
+/** Standard Olympic bar. Editable per exercise from the logger's ⋯ menu. */
+const BAR = 20;
 
 interface MuscleGroupSeed {
   name: string;
@@ -42,21 +47,21 @@ const PROGRAM: WorkoutSeed[] = [
       {
         name: 'חזה',
         exercises: [
-          { name: 'Barbell Bench Press', sets: 5, repsMin: 3, repsMax: 5, restSec: 180 },
+          { name: 'Barbell Bench Press', sets: 5, repsMin: 3, repsMax: 5, restSec: 180, barWeight: BAR },
           { name: 'Incline DB Press', sets: 3, repsMin: 5, repsMax: 7, restSec: 150 },
         ],
       },
       {
         name: 'כתפיים',
         exercises: [
-          { name: 'Overhead Press', sets: 4, repsMin: 4, repsMax: 6, restSec: 180 },
+          { name: 'Overhead Press', sets: 4, repsMin: 4, repsMax: 6, restSec: 180, barWeight: BAR },
           { name: 'Lateral Raise', sets: 3, repsMin: 10, repsMax: 12, restSec: 90 },
         ],
       },
       {
         name: 'טריצפס',
         exercises: [
-          { name: 'Close Grip Bench', sets: 3, repsMin: 5, repsMax: 7, restSec: 150 },
+          { name: 'Close Grip Bench', sets: 3, repsMin: 5, repsMax: 7, restSec: 150, barWeight: BAR },
           { name: 'Overhead Tricep Extension', sets: 3, repsMin: 8, repsMax: 10, restSec: 90 },
         ],
       },
@@ -103,14 +108,14 @@ const PROGRAM: WorkoutSeed[] = [
       {
         name: 'גב-עומק',
         exercises: [
-          { name: 'Barbell Row', sets: 4, repsMin: 4, repsMax: 6, restSec: 180 },
+          { name: 'Barbell Row', sets: 4, repsMin: 4, repsMax: 6, restSec: 180, barWeight: BAR },
           { name: 'Face Pull', sets: 3, repsMin: 12, repsMax: 15, restSec: 75, isMachine: true },
         ],
       },
       {
         name: 'ביצפס',
         exercises: [
-          { name: 'Barbell Curl', sets: 3, repsMin: 6, repsMax: 8, restSec: 90 },
+          { name: 'Barbell Curl', sets: 3, repsMin: 6, repsMax: 8, restSec: 90, barWeight: 10 },
           { name: 'Incline DB Curl', sets: 3, repsMin: 8, repsMax: 10, restSec: 90 },
         ],
       },
@@ -171,7 +176,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   restTimerSound: true,
   dismissedStalls: {},
   seeded: false,
-  schemaVersion: 4,
+  schemaVersion: 5,
   bodyReminderEnabled: false,
   bodyReminderDow: 0,
   bodyReminderTime: '09:00',
@@ -184,9 +189,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 export async function seedIfNeeded(): Promise<void> {
-  const settings = await db.settings.get('singleton');
-  if (settings?.seeded) return;
-
   await db.transaction(
     'rw',
     [
@@ -197,6 +199,11 @@ export async function seedIfNeeded(): Promise<void> {
       db.settings,
     ],
     async () => {
+      // Guard inside the transaction: StrictMode double-invokes the bootstrap
+      // effect, and a check-then-act outside would seed the program twice.
+      const settings = await db.settings.get('singleton');
+      if (settings?.seeded) return;
+
       const t = now();
 
       const plan: Plan = {
@@ -244,7 +251,7 @@ export async function seedIfNeeded(): Promise<void> {
               targetRepsMin: es.repsMin,
               targetRepsMax: es.repsMax,
               defaultRestSec: es.restSec ?? 150,
-              barWeight: 0,
+              barWeight: es.barWeight ?? 0,
               isMachine: es.isMachine ?? false,
               order: ei,
               ...(es.seedWeight !== undefined ? { seedWeight: es.seedWeight } : {}),
@@ -264,15 +271,17 @@ export async function seedIfNeeded(): Promise<void> {
 
 /** Ensure a settings row exists even if seeding ran in a prior version. */
 export async function ensureSettings(): Promise<AppSettings> {
-  const existing = await db.settings.get('singleton');
-  if (existing) {
-    // Backfill any new fields that didn't exist when the row was first written.
-    const merged: AppSettings = { ...DEFAULT_SETTINGS, ...existing };
-    if (JSON.stringify(merged) !== JSON.stringify(existing)) {
-      await db.settings.put(merged);
+  return db.transaction('rw', db.settings, async () => {
+    const existing = await db.settings.get('singleton');
+    if (existing) {
+      // Backfill any new fields that didn't exist when the row was first written.
+      const merged: AppSettings = { ...DEFAULT_SETTINGS, ...existing };
+      if (JSON.stringify(merged) !== JSON.stringify(existing)) {
+        await db.settings.put(merged);
+      }
+      return merged;
     }
-    return merged;
-  }
-  await db.settings.put(DEFAULT_SETTINGS);
-  return DEFAULT_SETTINGS;
+    await db.settings.put(DEFAULT_SETTINGS);
+    return DEFAULT_SETTINGS;
+  });
 }

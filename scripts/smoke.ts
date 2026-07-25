@@ -14,6 +14,7 @@ import {
 import { computePlateLayout } from '../src/utils/plateMath.ts';
 import { detectStall, deloadWeight } from '../src/utils/stall.ts';
 import { computeProgressionRate, suggestDeload, findSubstitutes } from '../src/utils/insights.ts';
+import { daysSinceLastWorkout } from '../src/utils/dates.ts';
 import {
   matchStrengthLift,
   assessStrength,
@@ -22,6 +23,9 @@ import {
   standardsForSex,
 } from '../src/utils/benchmarks.ts';
 import type { SetLog, ExerciseSessionStats, Exercise } from '../src/types/index.ts';
+
+// The date tests below cover a DST transition, which only exists in a DST zone.
+process.env.TZ = 'Asia/Jerusalem';
 
 let pass = 0;
 let fail = 0;
@@ -130,6 +134,26 @@ eq(tag.kind, 'pr', 'PR tag when top weight increases');
 const tagSame = compareToPrevious(allPrev[1] ?? current, allPrev[0] ?? null, [allPrev[0] ?? current]);
 eq(tagSame.kind, 'same', 'same tag when no change');
 
+// Bodyweight work (0 kg): weight/volume/1RM stay 0, so reps carry the progress.
+const bwStat = (id: string, reps: number): ExerciseSessionStats => ({
+  exerciseId: 'e2',
+  sessionId: id,
+  date: '2026-05-' + id,
+  topWeight: 0,
+  topReps: reps,
+  volume: 0,
+  est1RM: 0,
+  completedSets: 3,
+  plannedSets: 3,
+});
+{
+  const s1 = bwStat('01', 8);
+  const s2 = bwStat('02', 12);
+  eq(compareToPrevious(s2, s1, [s1]).kind, 'pr', 'bodyweight 8 → 12 reps is a PR');
+  eq(compareToPrevious(bwStat('03', 12), s2, [s1, s2]).kind, 'same', 'bodyweight flat reps = same');
+  eq(compareToPrevious(bwStat('03', 10), s2, [s1, s2]).kind, 'down', 'bodyweight reps drop = down');
+}
+
 // statsForExercise
 const stats = statsForExercise('s', 'ex', '2026-05-21', sets, 3);
 eq(stats.topWeight, 100, 'stats topWeight');
@@ -186,6 +210,15 @@ const r5 = computePlateLayout({
 });
 near(r5.perSideNet * 2, 20, 0.001, 'with only one 10kg pair, max 20 net');
 
+// Non-canonical inventory: greedy grabs 25 and strands 10, but 15+15 per side is exact.
+const r6 = computePlateLayout({
+  requestedNet: 60,
+  barWeight: 20,
+  inventory: [{ weight: 25, qty: 2 }, { weight: 15, qty: 4 }],
+});
+eq(r6.exact, true, '60 net is exact with 25/15 inventory');
+eq(r6.perSide, [15, 15], 'retry pass picks 15+15 per side instead of 25');
+
 // ---------- Stall detection ----------
 console.log('\n[Stall]');
 const makeStat = (id: string, top: number, vol: number): ExerciseSessionStats => ({
@@ -227,9 +260,31 @@ eq(
   'no stall flag with < 3 sessions',
 );
 
+// 0-weight exercise: reps are the only signal, so rising reps must not flag a stall.
+eq(
+  detectStall([bwStat('01', 8), bwStat('02', 12), bwStat('03', 15)], 'Hanging Leg Raise'),
+  null,
+  'no stall on 0-weight exercise with rising reps',
+);
+eq(
+  detectStall([bwStat('01', 10), bwStat('02', 10), bwStat('03', 10)], 'Hanging Leg Raise')?.exerciseName,
+  'Hanging Leg Raise',
+  'stall detected on 0-weight exercise with flat reps',
+);
+
 // deload weight: 100 → 90 → rounded to 90 with 2.5 increment
 eq(deloadWeight(100, 2.5), 90, 'deload 100 → 90');
-eq(deloadWeight(105, 2.5), Math.round(94.5 / 2.5) * 2.5, 'deload 105 with 2.5 increment');
+eq(deloadWeight(105, 2.5), 95, 'deload 105 → 95 (94.5 rounds up to the 2.5 grid)');
+
+console.log('\n[Days since last workout]');
+{
+  // 26 Mar 2027 is Israel's spring-forward day (23 hours long).
+  const now = new Date('2027-03-27T12:00:00');
+  eq(daysSinceLastWorkout(['2027-03-27'], now), 0, 'trained today → 0');
+  eq(daysSinceLastWorkout(['2027-03-26'], now), 1, 'yesterday → 1, across the DST change');
+  eq(daysSinceLastWorkout(['2027-03-20', '2027-03-24'], now), 3, 'counts from the most recent, not the first');
+  eq(daysSinceLastWorkout([], now), null, 'no sessions → null');
+}
 
 console.log('\n[Insights]');
 
@@ -300,11 +355,15 @@ eq(suggestDeload([makeStat('1', 100, 1000)]), null, 'deload null with 1 session'
 console.log('\n[Benchmarks — strength]');
 
 eq(matchStrengthLift('Barbell Bench Press'), 'bench', 'match bench from full name');
-eq(matchStrengthLift('Incline DB Bench'), 'bench', 'match bench from variant');
 eq(matchStrengthLift('Back Squat'), 'squat', 'match squat');
 eq(matchStrengthLift('Romanian Deadlift'), 'deadlift', 'match deadlift');
 eq(matchStrengthLift('Overhead Press'), 'ohp', 'match ohp');
 eq(matchStrengthLift('Lateral Raise'), null, 'no match for non-big lift');
+// Variants are graded against barbell standards, so they must not match at all.
+eq(matchStrengthLift('Incline DB Bench'), null, 'no bench standard for an incline dumbbell press');
+eq(matchStrengthLift('Close Grip Bench'), null, 'no bench standard for close grip');
+eq(matchStrengthLift('Hack Squat Machine'), null, 'no squat standard for a machine');
+eq(matchStrengthLift('DB Romanian Deadlift'), null, 'no deadlift standard for dumbbells');
 
 // Male, BW=80kg, bench 1RM=100kg → ratio 1.25 → intermediate exactly
 {
@@ -314,10 +373,12 @@ eq(matchStrengthLift('Lateral Raise'), null, 'no match for non-big lift');
   eq(a?.nextLevelKg, 120, 'bench next kg = 120');
 }
 
-// Sub-beginner case: bench 50kg @ 80kg BW = 0.625× → still beginner
+// Sub-beginner case: OHP 35kg @ 80kg BW = 0.44× → below the 0.55 beginner bar
 {
-  const a = assessStrength('bench', 50, 80, 'male');
-  eq(a?.level, 'beginner', 'sub-threshold defaults to beginner');
+  const a = assessStrength('ohp', 35, 80, 'male');
+  eq(a?.level, 'beginner', 'sub-threshold level is beginner');
+  eq(a?.nextLevel, 'beginner', 'next target is the beginner bar, not novice');
+  eq(a?.nextLevelKg, 44, 'beginner bar = 0.55 × 80 = 44kg');
 }
 
 // Elite: bench 140 @ 80 = 1.75× exactly → elite, no next level

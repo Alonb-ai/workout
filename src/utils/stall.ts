@@ -3,11 +3,11 @@ import type { ExerciseSessionStats, StallFlag } from '@/types';
 /**
  * Stall detection:
  *   An exercise is "stalled" if its last 3 sessions (in chronological order)
- *   show NO improvement in either top weight OR total volume.
- *   Concretely: max(topWeight) across the 3 == topWeight of session 1 of the 3
- *   AND same for volume.
+ *   show NO improvement in top weight, total volume OR reps at the top weight.
  *
- *   Equivalently: sessions 2 and 3 do not exceed session 1 in either metric.
+ *   Equivalently: sessions 2 and 3 do not exceed session 1 in any metric.
+ *   Reps matter because bodyweight work (0 kg) has topWeight and volume pinned
+ *   at 0 forever — same signal progression.ts uses when topWeight <= 0.
  *
  * Returns null if fewer than 3 sessions exist.
  */
@@ -24,15 +24,18 @@ export function detectStall(
   const everImprovedVol = lastThree
     .slice(1)
     .some((s) => s.volume > baseline.volume + 0.5);
+  const everImprovedReps = lastThree
+    .slice(1)
+    .some((s) => s.topReps > baseline.topReps);
 
-  if (everImprovedTop || everImprovedVol) return null;
+  if (everImprovedTop || everImprovedVol || everImprovedReps) return null;
 
   return {
     exerciseId: baseline.exerciseId,
     exerciseName,
     lastThreeSessionIds: lastThree.map((s) => s.sessionId),
     topWeight: lastThree[lastThree.length - 1]!.topWeight,
-    reason: 'אין שיפור בנפח או במשקל המקסימלי ב-3 האימונים האחרונים.',
+    reason: 'אין שיפור בנפח, במשקל המקסימלי או בחזרות ב-3 האימונים האחרונים.',
   };
 }
 

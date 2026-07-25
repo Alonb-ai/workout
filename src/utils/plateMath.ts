@@ -11,7 +11,8 @@ import type { PlatePair, PlateLayout } from '@/types';
  *
  * Returns plates per side (greedy from largest), the achieved total, and the remainder.
  *
- * Algorithm: greedy descending. We work in 0.01 kg units (integer cents) to avoid FP errors.
+ * Algorithm: greedy descending, with one retry that skips the biggest plate when the
+ * first pass misses. We work in 0.01 kg units (integer cents) to avoid FP errors.
  * Plates are placed in PAIRS. For each plate weight we have `floor(inventory/2)` usable pairs.
  */
 export function computePlateLayout(args: {
@@ -49,26 +50,38 @@ export function computePlateLayout(args: {
   // Sort plates descending, in 0.01-kg integer units to avoid floating point drift.
   const cents = (x: number) => Math.round(x * 100);
   const fromCents = (x: number) => x / 100;
-  // Plates load in pairs, so we operate on the TOTAL net (both sides).
-  let remaining = cents(requestedNet);
 
   const sortedPlates = [...inventory]
     .filter((p) => p.weight > 0 && p.qty >= 2)
     .map((p) => ({ weight: cents(p.weight), pairs: Math.floor(p.qty / 2) }))
     .sort((a, b) => b.weight - a.weight);
 
-  const perSide: number[] = [];
-  for (const plate of sortedPlates) {
-    const pairWeight = plate.weight * 2; // both sides together
-    if (pairWeight <= 0) continue;
-    const maxPairsByWeight = Math.floor(remaining / pairWeight);
-    const usePairs = Math.min(maxPairsByWeight, plate.pairs);
-    for (let i = 0; i < usePairs; i++) {
-      perSide.push(fromCents(plate.weight));
-      remaining -= pairWeight;
+  // Greedy descending. Plates load in pairs, so we work on the TOTAL net (both sides).
+  const fill = (plates: typeof sortedPlates) => {
+    let left = cents(requestedNet);
+    const picked: number[] = [];
+    for (const plate of plates) {
+      const pairWeight = plate.weight * 2; // both sides together
+      if (pairWeight <= 0) continue;
+      const usePairs = Math.min(Math.floor(left / pairWeight), plate.pairs);
+      for (let i = 0; i < usePairs; i++) {
+        picked.push(fromCents(plate.weight));
+        left -= pairWeight;
+      }
+      if (left <= 0) break;
     }
-    if (remaining <= 0) break;
+    return { picked, left };
+  };
+
+  let best = fill(sortedPlates);
+  // ponytail: one retry without the biggest plate rescues the common near-miss
+  // (own 25×2 + 15×4, want 60 → 15+15 not 25). Swap in a DP if a real case escapes it.
+  if (best.left > 0 && sortedPlates.length > 1) {
+    const alt = fill(sortedPlates.slice(1));
+    if (alt.left < best.left) best = alt;
   }
+  const perSide = best.picked;
+  const remaining = best.left;
 
   const achievedNet = cents(requestedNet) - remaining;
   const requestedTotal = fromCents(cents(requestedNet) + cents(barWeight));

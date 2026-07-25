@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/db';
@@ -7,10 +7,8 @@ import { EmptyState } from '@/components/EmptyState';
 import { Modal } from '@/components/Modal';
 import {
   IconBarbell,
-  IconCalendar,
   IconCheck,
   IconPlus,
-  IconRefresh,
   IconTrash,
   IconTrophy,
   IconWarn,
@@ -20,7 +18,7 @@ import { AddExerciseModal } from './AddExerciseModal';
 import type { DraftExercise } from './types';
 import {
   buildDraftFromWorkout,
-  applyRepeatLastSession,
+  reconcileDraftWithPlan,
   saveSession,
   type SaveResult,
 } from './buildSession';
@@ -75,6 +73,15 @@ export function WorkoutPage() {
     state?.workoutId ?? null,
   );
 
+  // Resolved by id, NOT by searching the active plan's list. A draft can belong
+  // to a workout the user has since moved to another plan; looking it up in the
+  // active plan returned undefined, and both the autosave and Finish & Save
+  // then silently did nothing while the banner still said "saved".
+  const selectedWorkout = useLiveQuery(
+    async () => (selectedWorkoutId ? ((await db.workouts.get(selectedWorkoutId)) ?? null) : null),
+    [selectedWorkoutId],
+  );
+
   // initialise selection if none yet
   useEffect(() => {
     if (!selectedWorkoutId && workouts && workouts.length > 0) {
@@ -108,94 +115,151 @@ export function WorkoutPage() {
     setLoading(true);
     setRestoredFromDraft(false);
     setLastSavedAt(null);
+    // Building a draft runs a history query per exercise, so two rapid tab
+    // switches overlap. Without this guard the slower run still called
+    // setDrafts and wrote workout A's sets into workout B's editor.
+    let cancelled = false;
     (async () => {
       const existing = await getWorkoutDraft(selectedWorkoutId);
+      if (cancelled) return;
       if (existing) {
-        setDrafts(existing.drafts);
+        // The draft is a snapshot; the plan may have moved on since. Refresh
+        // names/targets and pick up newly added exercises, without touching a
+        // single logged set.
+        const reconciled = await reconcileDraftWithPlan(selectedWorkoutId, existing.drafts);
+        if (cancelled) return;
+        setDrafts(reconciled);
         setSessionDate(existing.sessionDate);
         setNotes(existing.notes);
         startedAtRef.current = existing.startedAt;
         setRestoredFromDraft(true);
         setLastSavedAt(existing.updatedAt);
       } else {
+        const res = await buildDraftFromWorkout(selectedWorkoutId);
+        if (cancelled) return;
         startedAtRef.current = Date.now();
         setSessionDate(todayISO());
         setNotes('');
-        const res = await buildDraftFromWorkout(selectedWorkoutId);
         if (res) setDrafts(res.drafts);
       }
       setLoading(false);
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [selectedWorkoutId]);
 
-  // Debounced autosave — runs whenever the user touches anything. Skipped
-  // while we're loading the initial draft (would churn an identical write) or
-  // while the post-save score modal is up (the in-memory drafts still contain
-  // completed sets but the session is already committed; recreating the draft
-  // here is what produced the "ghost draft" bug).
-  useEffect(() => {
-    if (!selectedWorkoutId || loading || saveResult) return;
-    const workout = workouts?.find((w) => w.id === selectedWorkoutId);
-    if (!workout) return;
-    const id = selectedWorkoutId;
-    const startedAt = startedAtRef.current;
-    let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      // Bail if a save/discard kicked off after the timer was scheduled but
-      // before it fired — otherwise we'd overwrite the freshly committed state.
-      if (savingRef.current || cancelled) return;
-      if (isDraftDirty(drafts, notes)) {
+  // The single writer of the draft row. Called on a 500 ms debounce while
+  // typing, and again immediately whenever the app is backgrounded or the
+  // screen is left.
+  //
+  // It takes the workout id and the editor snapshot as EXPLICIT arguments
+  // rather than reading them from a closure: on a workout-tab switch the id
+  // changes one render before the new drafts finish loading, and a closure that
+  // paired the new id with the old drafts would write one workout's sets under
+  // another workout's key. `latest` just mirrors current state for the callers.
+  const latest = useRef({ drafts, notes, sessionDate });
+  latest.current = { drafts, notes, sessionDate };
+
+  type DraftSnapshot = { drafts: DraftExercise[]; notes: string; sessionDate: string };
+
+  const persistDraft = useCallback(
+    async (id: string, snap: DraftSnapshot, startedAt: number) => {
+      if (savingRef.current) return;
+      const workout = id === selectedWorkout?.id ? selectedWorkout : await db.workouts.get(id);
+      if (!workout) return;
+      if (isDraftDirty(snap.drafts, snap.notes)) {
         const updatedAt = Date.now();
         await db.workoutDrafts.put({
           workoutId: id,
           planId: workout.planId,
           workoutName: workout.name,
           workoutCode: workout.code,
-          drafts,
-          sessionDate,
-          notes,
+          drafts: snap.drafts,
+          sessionDate: snap.sessionDate,
+          notes: snap.notes,
           startedAt,
           updatedAt,
         });
-        if (!cancelled && !savingRef.current) setLastSavedAt(updatedAt);
-      } else {
-        const existing = await db.workoutDrafts.get(id);
-        if (existing && !savingRef.current) {
-          await db.workoutDrafts.delete(id);
-          if (!cancelled) setLastSavedAt(null);
-        }
+        if (!savingRef.current) setLastSavedAt(updatedAt);
+      } else if (await db.workoutDrafts.get(id)) {
+        if (savingRef.current) return;
+        await db.workoutDrafts.delete(id);
+        setLastSavedAt(null);
       }
-    }, 500);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [drafts, notes, sessionDate, selectedWorkoutId, loading, workouts, saveResult]);
+    },
+    [selectedWorkout],
+  );
 
+  // Debounced autosave for typing. Skipped while the initial draft is loading
+  // (would churn an identical write) and while the post-save score modal is up —
+  // the in-memory drafts still hold completed sets but the session is already
+  // committed, and re-creating the draft there is what produced the old
+  // "ghost draft" bug.
+  useEffect(() => {
+    if (!selectedWorkoutId || loading || saveResult) return;
+    const id = selectedWorkoutId;
+    const timer = window.setTimeout(
+      () => void persistDraft(id, latest.current, startedAtRef.current),
+      500,
+    );
+    return () => window.clearTimeout(timer);
+  }, [drafts, notes, sessionDate, selectedWorkoutId, loading, saveResult, persistDraft]);
+
+  // Ticking or un-ticking a set bypasses the debounce entirely. It is a
+  // discrete, deliberate action and it is the only thing in the editor that
+  // represents work actually done — a reload or an OS tab-discard in the 500 ms
+  // that followed the tap used to lose it, because the flush on pagehide is an
+  // async IndexedDB write that cannot finish during document teardown.
   const completedCount = useMemo(
     () => drafts.reduce((s, d) => s + d.sets.filter((x) => x.completed).length, 0),
     [drafts],
   );
+  const lastPersistedCompleted = useRef(completedCount);
+  useEffect(() => {
+    if (!selectedWorkoutId || loading || saveResult) return;
+    if (lastPersistedCompleted.current === completedCount) return;
+    lastPersistedCompleted.current = completedCount;
+    void persistDraft(selectedWorkoutId, latest.current, startedAtRef.current);
+  }, [completedCount, selectedWorkoutId, loading, saveResult, persistDraft]);
+
+  // Flush immediately when the app is backgrounded or the screen is left. iOS
+  // can freeze or discard a PWA tab the moment it loses the foreground, so a
+  // pending 500 ms debounce is not a safe place for the user's last set to sit.
+  // `visibilitychange` is the event iOS Safari fires reliably; `pagehide`
+  // covers tab close and the back/forward cache. Writes are idempotent, so
+  // firing on several of them costs nothing. Note the deps deliberately exclude
+  // `loading`/`saveResult`: the cleanup must run only when the workout actually
+  // changes or the screen unmounts, and it persists the id + snapshot captured
+  // here, which are always a matching pair.
+  useEffect(() => {
+    const id = selectedWorkoutId;
+    if (!id) return;
+    const flushNow = () => void persistDraft(id, latest.current, startedAtRef.current);
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushNow();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flushNow);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flushNow);
+      flushNow();
+    };
+  }, [selectedWorkoutId, persistDraft]);
+
   const plannedCount = useMemo(
     () => drafts.reduce((s, d) => s + d.targetSets, 0),
     [drafts],
   );
 
-  const incomplete = completedCount < plannedCount;
-
-  const onRepeatLast = async () => {
-    if (!selectedWorkoutId) return;
-    const updated = await applyRepeatLastSession(selectedWorkoutId, drafts);
-    const changed = updated.some((u, i) => {
-      const d = drafts[i];
-      return d && u.sets.some((s, j) => {
-        const ds = d.sets[j];
-        return !ds || s.weight !== ds.weight || s.reps !== ds.reps;
-      });
-    });
-    setDrafts(updated);
-    toast.success(changed ? 'נטענו ערכי האימון הקודם' : 'אין אימון קודם זמין לטעינה');
-  };
+  // Per exercise, not on the totals: extra sets on one lift used to mask an
+  // exercise that was never logged at all, so the "missing sets" warning never
+  // appeared for exactly the case it exists to catch.
+  const incomplete = useMemo(
+    () => drafts.some((d) => d.sets.filter((s) => s.completed).length < d.targetSets),
+    [drafts],
+  );
 
   const onAttemptSave = () => {
     if (completedCount === 0) {
@@ -211,8 +275,14 @@ export function WorkoutPage() {
 
   const onSave = async () => {
     if (!selectedWorkoutId) return;
-    const workout = workouts?.find((w) => w.id === selectedWorkoutId);
-    if (!workout) return;
+    const workout = selectedWorkout ?? (await db.workouts.get(selectedWorkoutId));
+    if (!workout) {
+      // Don't leave the summary modal sitting there with nothing happening.
+      setSummaryOpen(false);
+      setConfirmIncompleteOpen(false);
+      toast.error('האימון הזה נמחק מהתכנית — לא ניתן לשמור אותו.');
+      return;
+    }
     setConfirmIncompleteOpen(false);
     setSummaryOpen(false);
     setLoading(true);
@@ -242,6 +312,10 @@ export function WorkoutPage() {
       stopTimer();
     } catch (e) {
       console.error(e);
+      // Must be cleared here too: the only other reset lives in the score-modal
+      // close handlers, which never run on this path — leaving savingRef true
+      // silently killed the autosave for the rest of the session.
+      savingRef.current = false;
       toast.error('שמירת האימון נכשלה. נסו שוב.');
     } finally {
       setLoading(false);
@@ -273,7 +347,13 @@ export function WorkoutPage() {
     toast.info('הטיוטה נמחקה — אפשר להתחיל מחדש.');
   };
 
-  if (!activePlan || (workouts && workouts.length === 0)) {
+  // `undefined` means the live query hasn't resolved yet — showing "no workouts
+  // in plan" during that window told the user his program was gone.
+  if (activePlan === undefined || workouts === undefined) {
+    return <div className="card p-6 text-center text-fg-muted mt-6">טוען…</div>;
+  }
+
+  if (!activePlan || workouts.length === 0) {
     return (
       <div className="pt-6">
         <EmptyState
@@ -292,41 +372,41 @@ export function WorkoutPage() {
 
   return (
     <div className="pt-3">
-      <header className="mb-3 flex items-center justify-between gap-2">
+      <header className="mb-3 flex items-end justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-2xs uppercase tracking-wider text-fg-muted">תיעוד אימון</p>
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              className="bg-transparent text-sm font-semibold text-fg border-b border-dashed border-fg-ghost focus:border-accent outline-none px-1"
-              value={sessionDate}
-              onChange={(e) => setSessionDate(e.target.value)}
-              aria-label="תאריך האימון"
-              max={format(new Date(), 'yyyy-MM-dd')}
-            />
-            <IconCalendar size={14} className="text-fg-muted" />
-          </div>
+          <p className="eyebrow">תיעוד אימון</p>
+          <h1 className="text-xl font-extrabold truncate mt-0.5">
+            {selectedWorkout?.name.split('—')[0]?.trim() ?? 'אימון'}
+          </h1>
         </div>
-        <button
-          className="btn-ghost !min-h-9 !px-2 text-xs"
-          onClick={onRepeatLast}
-          disabled={loading}
-        >
-          <IconRefresh size={14} /> חזרה על האחרון
-        </button>
+        {/* A real field, not a dashed underline. The native picker stays — it is
+            better than anything we would build, and it is the OS the user knows. */}
+        {/* The native picker indicator IS the calendar icon (tinted to the
+            accent in index.css) — a second one of our own was just clutter. */}
+        <label className="field shrink-0 flex items-center px-2.5 h-10 focus-within:border-accent/70">
+          <input
+            type="date"
+            className="bg-transparent num text-xs font-semibold text-fg outline-none w-[7.5rem]"
+            value={sessionDate}
+            onChange={(e) => setSessionDate(e.target.value)}
+            aria-label="תאריך האימון"
+            max={format(new Date(), 'yyyy-MM-dd')}
+          />
+        </label>
       </header>
 
-      {/* Workout tabs */}
-      <div className="flex gap-2 overflow-x-auto no-scrollbar mb-3 pb-1 -mx-1 px-1">
-        {(workouts ?? []).map((w) => (
+      {/* Workout tabs — a segmented control on one recessed track, so the strip
+          reads as a single switch instead of four loose buttons. */}
+      <div className="seg w-full mb-3 overflow-x-auto no-scrollbar">
+        {workouts.map((w) => (
           <button
             key={w.id}
             onClick={() => setSelectedWorkoutId(w.id)}
             data-active={w.id === selectedWorkoutId}
-            className="pill-tab"
+            className="pill-tab flex-1 !px-2"
+            title={w.name}
           >
             {w.code}
-            <span className="hidden sm:inline"> · {w.name.split('—')[0]?.trim()}</span>
           </button>
         ))}
       </div>
@@ -353,25 +433,29 @@ export function WorkoutPage() {
         </div>
       )}
 
-      {/* progress bar */}
-      <div className="card-flat px-3 py-2 mb-3 flex items-center justify-between">
-        <div>
-          <p className="text-2xs text-fg-muted">התקדמות אימון</p>
-          <p className="num text-sm font-bold">
-            {completedCount} / {plannedCount} סטים
-          </p>
+      {/* Progress + finish. Two rows rather than three things elbowing each
+          other in one: the count and the action on top, the bar spanning the
+          full width beneath it where it can actually be read at a glance. */}
+      <div className="card px-3 py-2.5 mb-3 space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="eyebrow">התקדמות אימון</p>
+            <p className="num-display text-lg leading-tight mt-0.5">
+              {completedCount} / {plannedCount} סטים
+            </p>
+          </div>
+          <button className="btn-primary !min-h-10 !px-3.5 text-xs shrink-0" onClick={onAttemptSave}>
+            <IconCheck size={15} /> סיים ושמור
+          </button>
         </div>
-        <div className="flex-1 mx-3 h-1.5 bg-ink-700 rounded-full overflow-hidden">
+        <div className="h-1.5 rounded-full bg-ink-950 overflow-hidden shadow-field">
           <div
-            className="h-full bg-accent transition-[width] duration-300"
+            className="h-full rounded-full bg-gradient-to-l from-accent to-accent-hover transition-[width] duration-500 ease-out"
             style={{
               width: `${plannedCount === 0 ? 0 : (completedCount / plannedCount) * 100}%`,
             }}
           />
         </div>
-        <button className="btn-primary !min-h-9 !px-3 text-xs" onClick={onAttemptSave}>
-          <IconCheck size={14} /> סיים ושמור
-        </button>
       </div>
 
       {/* Show the loader whenever we're loading — also when switching between
@@ -380,7 +464,7 @@ export function WorkoutPage() {
       {loading ? (
         <div className="card p-6 text-center text-fg-muted">טוען אימון…</div>
       ) : (
-        <Section noPad>
+        <Section>
           <div className="space-y-3">
             <AnimatePresence>
               {drafts.map((d) => (

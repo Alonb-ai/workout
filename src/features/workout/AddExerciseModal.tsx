@@ -46,7 +46,6 @@ export function AddExerciseModal({
   const [newRepsMax, setNewRepsMax] = useState<number>(10);
   const [newRest, setNewRest] = useState<number>(120);
   const [newIsMachine, setNewIsMachine] = useState(false);
-  const [persistNew, setPersistNew] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -115,7 +114,6 @@ export function AddExerciseModal({
     setMode('pick');
     setSearch('');
     setNewName('');
-    setPersistNew(false);
     setNewIsMachine(false);
   }, [open]);
 
@@ -175,21 +173,14 @@ export function AddExerciseModal({
       createdAt: t,
       updatedAt: t,
     };
-    if (persistNew) {
-      // Save to the plan permanently.
-      await db.exercises.add(exercise);
-    } else {
-      // One-time: still need the row in DB so the snapshot/history pipeline
-      // works, but we mark it so the plan editor can identify it as ephemeral.
-      // We achieve this with a note prefix and leaving order high; the user can
-      // clean these up later from the plan editor if they want.
-      exercise.notes = '[נוסף באימון בודד]';
-      await db.exercises.add(exercise);
-    }
+    // Always persisted to the plan. The old "one-time only" checkbox added the
+    // exercise to the plan either way and only differed by a marker note that
+    // nothing read — it promised something the app never did.
+    await db.exercises.add(exercise);
     const draft = await buildDraftForExercise(exercise, group);
     onAdd(draft);
     onClose();
-    toast.success(persistNew ? 'נוסף לתכנית ולאימון' : 'נוסף לאימון הנוכחי');
+    toast.success('נוסף לתכנית ולאימון');
   };
 
   return (
@@ -215,17 +206,19 @@ export function AddExerciseModal({
         )
       }
     >
-      <div className="flex gap-2 mb-3">
+      {/* One recessed track with the active pill riding on it — the two modes
+          read as one control instead of two loose buttons. */}
+      <div className="seg flex w-full mb-3">
         <button
           data-active={mode === 'pick'}
-          className="pill-tab flex-1"
+          className="pill-tab flex-1 flex items-center justify-center min-h-11"
           onClick={() => setMode('pick')}
         >
           מהתכנית
         </button>
         <button
           data-active={mode === 'create'}
-          className="pill-tab flex-1"
+          className="pill-tab flex-1 flex items-center justify-center min-h-11"
           onClick={() => setMode('create')}
         >
           תרגיל חדש
@@ -234,47 +227,50 @@ export function AddExerciseModal({
 
       {mode === 'pick' ? (
         <>
+          {/* Search leads the flow: on a phone this list is long and the user
+              already knows the name of the lift they want. */}
           <div className="relative mb-3">
             <IconSearch
-              size={16}
-              className="absolute top-1/2 -translate-y-1/2 right-3 text-fg-muted pointer-events-none"
+              size={18}
+              className="absolute top-1/2 -translate-y-1/2 start-3.5 text-fg-dim pointer-events-none"
             />
             <input
-              className="input pr-9 text-sm"
+              className="input ps-11 !min-h-12 text-base"
               placeholder="חיפוש לפי שם או קבוצת שריר…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
           {filteredPick.length === 0 ? (
-            <p className="text-center text-sm text-fg-muted py-6">
+            <p className="text-center text-sm text-fg-muted py-8">
               {planExercises.length === 0
                 ? 'אין תרגילים בתכנית. צרו קודם בעורך התכנית.'
                 : 'כל התרגילים מהתכנית כבר באימון. נסו "תרגיל חדש".'}
             </p>
           ) : (
-            <ul className="space-y-1 max-h-[55vh] overflow-y-auto -mx-1 px-1">
+            <ul className="card overflow-hidden divide-y divide-line max-h-[55vh] overflow-y-auto">
               {filteredPick.map((row) => (
                 <li key={row.exercise.id}>
                   <button
-                    className="w-full text-right card-flat p-2.5 hover:bg-ink-800 transition-colors flex items-center gap-2"
+                    className="w-full text-right px-3 py-2.5 min-h-[56px] hover:bg-ink-800 active:bg-ink-800 transition-colors flex items-center gap-3"
                     onClick={() => pickExisting(row.exercise.id)}
                   >
-                    <span className="w-8 h-8 rounded-lg bg-accent-soft text-accent flex items-center justify-center shrink-0">
+                    <span className="w-9 h-9 rounded-xl bg-ink-800 border border-line-muted text-accent-text flex items-center justify-center shrink-0">
                       <IconBarbell size={16} />
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold truncate">{row.exercise.name}</p>
-                      <p className="text-2xs text-fg-muted truncate">
+                      <p className="text-2xs text-fg-dim truncate">
                         {row.group.name}
                         {!row.isInCurrentWorkout && row.workoutName
                           ? ` · מאימון: ${row.workoutName.split('—')[0]?.trim()}`
                           : ''}
-                        {' · '}
-                        {row.exercise.targetSets}×{row.exercise.targetRepsMin}-{row.exercise.targetRepsMax}
                       </p>
                     </div>
-                    <IconPlus size={18} className="text-accent shrink-0" />
+                    <span className="num text-2xs text-fg-muted shrink-0">
+                      {row.exercise.targetSets}×{row.exercise.targetRepsMin}-{row.exercise.targetRepsMax}
+                    </span>
+                    <IconPlus size={18} className="text-accent-text shrink-0" />
                   </button>
                 </li>
               ))}
@@ -286,7 +282,7 @@ export function AddExerciseModal({
           <div>
             <label className="label">שם התרגיל</label>
             <input
-              className="input"
+              className="input !min-h-12 text-base"
               autoFocus
               placeholder="לדוגמה: Cable Crossover"
               value={newName}
@@ -360,7 +356,7 @@ export function AddExerciseModal({
             </div>
           </div>
 
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex items-center gap-3 text-sm card-flat px-3 min-h-[52px] cursor-pointer">
             <input
               type="checkbox"
               className="w-5 h-5 accent-orange-500"
@@ -370,21 +366,11 @@ export function AddExerciseModal({
             מכונה / סטאק
           </label>
 
-          <label className="flex items-start gap-2 text-sm bg-ink-900 rounded-xl p-3 border border-line cursor-pointer">
-            <input
-              type="checkbox"
-              className="w-5 h-5 accent-orange-500 mt-0.5 shrink-0"
-              checked={persistNew}
-              onChange={(e) => setPersistNew(e.target.checked)}
-            />
-            <span>
-              <span className="font-semibold">שמור גם לתכנית</span>
-              <span className="block text-2xs text-fg-muted mt-0.5">
-                אם לא תסמן, התרגיל ייווסף רק לאימון הנוכחי וההיסטוריה שלו תישאר. תוכל למחוק
-                אותו מאוחר יותר מעורך התכנית.
-              </span>
-            </span>
-          </label>
+          <p className="relative ps-3 text-2xs text-fg-dim leading-relaxed">
+            <span className="absolute inset-y-0 start-0 w-[3px] rounded-full bg-line" aria-hidden />
+            התרגיל נוסף גם לתכנית, כדי שההיסטוריה וההתקדמות שלו יישמרו. אם הוא היה חד-פעמי —
+            אפשר למחוק אותו מעורך התכנית.
+          </p>
         </div>
       )}
     </Modal>

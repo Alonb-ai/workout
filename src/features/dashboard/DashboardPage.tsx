@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Link, useNavigate } from 'react-router-dom';
 import { db } from '@/db/db';
@@ -7,17 +8,19 @@ import {
   IconBarbell,
   IconCalendar,
   IconChart,
-  IconClock,
+  IconCheck,
   IconEdit,
   IconFlame,
   IconList,
-  IconPill,
   IconSettings,
   IconTrophy,
   IconWarn,
 } from '@/components/Icon';
-import { formatHebDateFull, todayISO } from '@/utils/dates';
-import { computeStreak } from '@/utils/dates';
+import { formatHebDate, formatHebDateFull, todayISO } from '@/utils/dates';
+import { daysSinceLastWorkout } from '@/utils/dates';
+import { commitDraft } from '../workout/buildSession';
+import { getLatestBodyMeasurement } from '@/db/queries';
+import { toast } from '@/store/toast';
 import { useStallFlags } from './useStallFlags';
 import { useTodaySupplements } from '../supplements/useTodaySupplements';
 import { computeWeeklyVolume } from './stats';
@@ -30,6 +33,7 @@ export function DashboardPage() {
   const today = todayISO();
   const navigate = useNavigate();
   const settings = useSettings();
+  const [committing, setCommitting] = useState<string | null>(null);
 
   const activePlan = useLiveQuery(
     async () =>
@@ -62,10 +66,16 @@ export function DashboardPage() {
     async () => (await db.workoutDrafts.toArray()).sort((a, b) => b.updatedAt - a.updatedAt),
     [],
   );
-  const latestBody = useLiveQuery(async () => {
-    const all = await db.bodyMeasurements.toArray();
-    return all.sort((a, b) => (a.date < b.date ? -1 : 1)).pop() ?? null;
-  }, []);
+  // The one correct implementation, in queries.ts — the inline sort here had no
+  // tiebreak for same-date rows, so "latest" disagreed between screens.
+  const latestBody = useLiveQuery(() => getLatestBodyMeasurement(), []);
+
+  // `undefined` = the query hasn't resolved; `null` = there really is no plan.
+  // Conflating them replaced the whole dashboard with "אין תכנית פעילה" for a
+  // frame on every single visit.
+  if (activePlan === undefined) {
+    return <div className="card p-6 text-center text-fg-muted mt-6">טוען…</div>;
+  }
 
   if (!activePlan) {
     return (
@@ -96,7 +106,7 @@ export function DashboardPage() {
       return a.lastDate < b.lastDate ? -1 : 1;
     })[0]?.w;
 
-  const streak = computeStreak((completedSessions ?? []).map((s) => s.date));
+  const daysSince = daysSinceLastWorkout((completedSessions ?? []).map((s) => s.date));
 
   const monthStart = format(startOfMonth(parseISO(today)), 'yyyy-MM-dd');
   const sessionsThisMonth = (completedSessions ?? []).filter((s) => s.date >= monthStart).length;
@@ -123,7 +133,10 @@ export function DashboardPage() {
         </button>
       </header>
 
-      {/* In-progress drafts — surface so the user can pick up where they left off */}
+      {/* In-progress drafts. A draft dated before today is a workout the user
+          logged and forgot to save — it gets a one-tap rescue instead of a
+          "continue editing" link, because forgetting to save is the single
+          biggest way this app used to lose his data. */}
       {drafts && drafts.length > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 12 }}
@@ -137,6 +150,60 @@ export function DashboardPage() {
               (s, ex) => s + ex.sets.filter((x) => x.completed).length,
               0,
             );
+            const forgotten = d.sessionDate < today && doneSets > 0;
+
+            if (forgotten) {
+              return (
+                <div
+                  key={d.workoutId}
+                  className="card border-warn/50 bg-warn-soft/30 p-3 space-y-2.5"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="shrink-0 w-10 h-10 rounded-xl bg-warn-soft text-warn flex items-center justify-center">
+                      <IconWarn size={18} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-2xs uppercase tracking-wider text-warn">
+                        אימון שלא נשמר
+                      </p>
+                      <p className="font-bold truncate text-sm">{d.workoutName}</p>
+                      <p className="text-2xs text-fg-muted num">
+                        {formatHebDate(d.sessionDate)} · {doneSets}/{totalSets} סטים
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="btn-primary flex-1 !min-h-10 text-xs"
+                      disabled={committing === d.workoutId}
+                      onClick={async () => {
+                        setCommitting(d.workoutId);
+                        try {
+                          const res = await commitDraft(d);
+                          toast.success(`האימון נשמר · ציון ${res.score}`);
+                        } catch (e) {
+                          console.error(e);
+                          toast.error('שמירת האימון נכשלה. נסו שוב.');
+                        } finally {
+                          setCommitting(null);
+                        }
+                      }}
+                    >
+                      <IconCheck size={14} />
+                      {committing === d.workoutId ? 'שומר…' : 'שמור עכשיו'}
+                    </button>
+                    <Link
+                      to="/workout"
+                      state={{ workoutId: d.workoutId }}
+                      className="btn-ghost !min-h-10 text-xs"
+                    >
+                      <IconEdit size={14} /> עריכה
+                    </Link>
+                  </div>
+                </div>
+              );
+            }
+
             return (
               <Link
                 key={d.workoutId}
@@ -168,28 +235,39 @@ export function DashboardPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
         >
+          {/* The screen's one job. The workout code is set as a display figure,
+              the muscle groups read underneath it, and starting is a real
+              button rather than a line of orange text pretending to be one. */}
           <Link
             to="/workout"
             state={{ workoutId: nextWorkout.id }}
-            className="block card bg-gradient-to-bl from-accent-soft via-ink-850 to-ink-850 p-4 mb-5"
+            className="card-hero block p-4 mb-5 active:scale-[0.99] transition-transform duration-150"
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-2xs uppercase tracking-wider text-fg-muted">האימון הבא</p>
-                <h2 className="text-lg font-bold mt-1 truncate">{nextWorkout.name}</h2>
-                <p className="text-xs text-fg-muted mt-1">
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="eyebrow">האימון הבא</p>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="num-display text-3xl leading-none text-accent-text">
+                    {nextWorkout.code}
+                  </span>
+                  <h2 className="text-base font-bold truncate">
+                    {nextWorkout.name.split('—')[0]?.trim()}
+                  </h2>
+                </div>
+                <p className="text-xs text-fg-muted mt-1.5 truncate">
+                  {nextWorkout.name.split('—')[1]?.trim() ?? ''}
+                </p>
+                <p className="text-2xs text-fg-dim mt-1">
                   {lastByWorkout.get(nextWorkout.id)
-                    ? `לאחרונה: ${lastByWorkout.get(nextWorkout.id)}`
-                    : 'אימון ראשון'}
+                    ? `לאחרונה ${formatHebDate(lastByWorkout.get(nextWorkout.id)!)}`
+                    : 'עוד לא ביצעת אותו'}
                 </p>
               </div>
-              <div className="shrink-0 w-12 h-12 rounded-2xl bg-accent text-ink-950 flex items-center justify-center">
+              <span className="shrink-0 w-12 h-12 rounded-2xl bg-accent text-ink-950 flex items-center justify-center shadow-accent-lift">
                 <IconBarbell size={24} />
-              </div>
+              </span>
             </div>
-            <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-accent">
-              התחל אימון ←
-            </div>
+            <span className="btn-primary w-full mt-4 !min-h-11 text-sm">התחל אימון</span>
           </Link>
         </motion.div>
       )}
@@ -197,7 +275,12 @@ export function DashboardPage() {
       {/* Quick stats */}
       <Section title="סטטיסטיקות">
         <div className="grid grid-cols-2 gap-2">
-          <Stat icon={<IconFlame className="text-accent" />} label="רצף ימים" value={String(streak)} sub="אימונים" />
+          <Stat
+            icon={<IconFlame className="text-accent" />}
+            label="מאז אימון"
+            value={daysSince === null ? '—' : daysSince === 0 ? 'היום' : String(daysSince)}
+            sub={daysSince === null ? 'עוד לא התאמנת' : daysSince === 0 ? 'כל הכבוד' : 'ימים'}
+          />
           <Stat icon={<IconCalendar className="text-info" />} label="החודש" value={String(sessionsThisMonth)} sub="אימונים" />
           <Stat
             icon={<IconChart className="text-good" />}
@@ -205,11 +288,12 @@ export function DashboardPage() {
             value={weeklyVolume === 0 ? '—' : `${weeklyVolume.toLocaleString('he-IL')}`}
             sub="ק״ג × חזרות"
           />
+          {/* Was rendering the raw ISO date ("2026-07-23") as a display figure. */}
           <Stat
             icon={<IconTrophy className="text-warn" />}
             label="שיא אחרון"
-            value={recentPR ? recentPR.date : '—'}
-            sub={recentPR ? `${recentPR.count} שיאים` : 'אין עדיין'}
+            value={recentPR ? String(recentPR.count) : '—'}
+            sub={recentPR ? `שיאים · ${formatHebDate(recentPR.date)}` : 'אין עדיין'}
           />
         </div>
       </Section>
@@ -337,15 +421,20 @@ export function DashboardPage() {
           </span>
           {latestBody ? (
             <div className="flex-1 min-w-0">
-              <p className="font-semibold text-sm">
-                <span className="num">{latestBody.bodyWeight.toFixed(1)} kg</span>
+              <p className="flex items-baseline gap-1.5">
+                <span className="num-display text-lg leading-none">
+                  {latestBody.bodyWeight.toFixed(1)}
+                </span>
+                <span className="text-2xs text-fg-muted">ק״ג</span>
                 {latestBody.fatPct !== undefined && (
-                  <span className="text-fg-muted ms-2 text-xs">
-                    · <span className="num">{latestBody.fatPct}%</span> שומן
-                  </span>
+                  <>
+                    <span className="text-fg-ghost">·</span>
+                    <span className="num-display text-sm leading-none">{latestBody.fatPct}%</span>
+                    <span className="text-2xs text-fg-muted">שומן</span>
+                  </>
                 )}
               </p>
-              <p className="text-2xs text-fg-muted">
+              <p className="text-2xs text-fg-dim mt-1">
                 לפני {differenceInDays(new Date(), parseISO(latestBody.date))} ימים
               </p>
             </div>
@@ -359,24 +448,8 @@ export function DashboardPage() {
         </Link>
       </Section>
 
-      <div className="grid grid-cols-2 gap-3 mt-4">
-        <Link to="/workout" className="card p-3 flex items-center gap-3 hover:bg-ink-800 transition-colors">
-          <IconBarbell className="text-accent" />
-          <span className="text-sm font-semibold">התחל אימון</span>
-        </Link>
-        <Link to="/progress" className="card p-3 flex items-center gap-3 hover:bg-ink-800 transition-colors">
-          <IconChart className="text-info" />
-          <span className="text-sm font-semibold">צפה בהתקדמות</span>
-        </Link>
-        <Link to="/supplements" className="card p-3 flex items-center gap-3 hover:bg-ink-800 transition-colors">
-          <IconPill className="text-good" />
-          <span className="text-sm font-semibold">נהל תוספים</span>
-        </Link>
-        <Link to="/settings" className="card p-3 flex items-center gap-3 hover:bg-ink-800 transition-colors">
-          <IconClock className="text-warn" />
-          <span className="text-sm font-semibold">טיימר מנוחה</span>
-        </Link>
-      </div>
+      {/* ponytail: the four "quick links" that used to sit here were the bottom
+          tab bar again, one scroll further down. Deleted. */}
     </div>
   );
 }
@@ -394,14 +467,14 @@ function Stat({
 }) {
   return (
     <div className="card p-3">
-      <div className="flex items-center gap-2 mb-1">
-        <span className="w-7 h-7 rounded-lg bg-ink-800 border border-line flex items-center justify-center">
+      <div className="flex items-center gap-2">
+        <span className="w-6 h-6 rounded-lg bg-ink-800 border border-line-muted flex items-center justify-center [&>svg]:w-3.5 [&>svg]:h-3.5">
           {icon}
         </span>
-        <span className="text-2xs text-fg-muted">{label}</span>
+        <span className="eyebrow truncate">{label}</span>
       </div>
-      <p className="num text-2xl font-bold">{value}</p>
-      <p className="text-2xs text-fg-muted">{sub}</p>
+      <p className="num-display text-2xl mt-2 leading-none">{value}</p>
+      <p className="text-2xs text-fg-dim mt-1 truncate">{sub}</p>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, now } from '@/db/db';
+import { db } from '@/db/db';
 import { Section } from '@/components/Section';
 import {
   IconArrowRight,
@@ -16,9 +16,98 @@ import { Modal } from '@/components/Modal';
 import { NumberInput } from '@/components/NumberInput';
 import { confirmDialog } from '@/components/Confirm';
 import { toast } from '@/store/toast';
-import { statsForExercise, compareToPrevious } from '@/utils/scoring';
+import { statsForExercise, compareToPrevious, computeWorkoutScore } from '@/utils/scoring';
 import { getExerciseStatsHistory } from '@/db/queries';
 import type { SetLog } from '@/types';
+
+/**
+ * Re-derive the stored session aggregates (volume / score / prCount /
+ * completionPct) from whatever is currently in the DB. Must run after any edit
+ * to a set or to the session date, otherwise the journal, the charts and the
+ * next session's volume baseline all keep showing the pre-edit numbers.
+ */
+async function recomputeSession(sessionId: string): Promise<void> {
+  const session = await db.sessions.get(sessionId);
+  if (!session) return;
+  const logs = await db.exerciseLogs.where('sessionId').equals(sessionId).toArray();
+  const sets = await db.setLogs.where('sessionId').equals(sessionId).toArray();
+
+  let volume = 0;
+  let loggedPlannedSets = 0;
+  let completedSets = 0;
+  let prCount = 0;
+  for (const log of logs) {
+    const mySets = sets.filter((s) => s.exerciseLogId === log.id);
+    const cur = statsForExercise(sessionId, log.exerciseId, session.date, mySets, log.targetSets);
+    volume += cur.volume;
+    loggedPlannedSets += log.targetSets;
+    completedSets += cur.completedSets;
+    const hist = await getExerciseStatsHistory(log.exerciseId);
+    const idx = hist.findIndex((h) => h.sessionId === sessionId);
+    const allPrev = idx < 0 ? hist : hist.slice(0, idx);
+    const tag = compareToPrevious(cur, allPrev[allPrev.length - 1] ?? null, allPrev);
+    if (cur.completedSets > 0 && tag.kind === 'pr') prCount++;
+  }
+
+  // The 3 same-workout sessions that came before this one — the same baseline
+  // saveSession used.
+  const prevVolumes = (await db.sessions.where('workoutId').equals(session.workoutId).toArray())
+    .filter(
+      (s) =>
+        s.status === 'completed' &&
+        s.id !== sessionId &&
+        (s.date < session.date ||
+          (s.date === session.date && (s.startedAt ?? 0) < (session.startedAt ?? 0))),
+    )
+    .sort((a, b) =>
+      a.date === b.date ? (b.startedAt ?? 0) - (a.startedAt ?? 0) : a.date < b.date ? 1 : -1,
+    )
+    .slice(0, 3)
+    .map((s) => s.totalVolume ?? 0);
+
+  // Skipped exercises write no ExerciseLog, so the logs alone under-count what
+  // was planned. Use the figure stored at save time; fall back to the logs only
+  // for sessions saved before that field existed.
+  const plannedSets = session.plannedSets ?? loggedPlannedSets;
+
+  const score = computeWorkoutScore({
+    currentVolume: volume,
+    prevVolumes,
+    prCount,
+    plannedSets,
+    completedSets,
+  });
+  await db.sessions.update(sessionId, {
+    totalVolume: volume,
+    score: score.score,
+    prCount,
+    completionPct: score.completionPct,
+    plannedSets,
+  });
+}
+
+/**
+ * Rescore this session AND every session after it, oldest first.
+ *
+ * PRs are relative: lowering a weight in an old session can turn a later
+ * session into a record it wasn't, or strip one it was. Rescoring only the
+ * edited session left the journal showing a שיא on a session the very same
+ * screen was tagging ירידה. A single user has hundreds of sessions at most, so
+ * walking the tail is cheap and always right.
+ */
+async function recomputeFrom(sessionId: string): Promise<void> {
+  const edited = await db.sessions.get(sessionId);
+  if (!edited) return;
+  const isAfter = (s: { date: string; startedAt?: number }) =>
+    s.date > edited.date ||
+    (s.date === edited.date && (s.startedAt ?? 0) >= (edited.startedAt ?? 0));
+  const tail = (await db.sessions.toArray())
+    .filter((s) => s.status === 'completed' && isAfter(s))
+    .sort((a, b) =>
+      a.date === b.date ? (a.startedAt ?? 0) - (b.startedAt ?? 0) : a.date < b.date ? -1 : 1,
+    );
+  for (const s of tail) await recomputeSession(s.id);
+}
 
 export function SessionDetailPage() {
   const { sessionId = '' } = useParams();
@@ -76,14 +165,19 @@ export function SessionDetailPage() {
         <IconArrowRight size={14} /> חזרה ליומן
       </Link>
 
-      <header className="mb-4">
-        <p className="text-2xs uppercase tracking-wider text-fg-muted">
-          <span className="num">{session.workoutCode}</span> · {session.workoutName}
-        </p>
-        <div className="flex items-center gap-2 mt-1">
-          <h1 className="text-2xl font-extrabold">{formatHebDateFull(session.date)}</h1>
+      <header className="mb-5">
+        <div className="flex items-start gap-1">
+          <div className="min-w-0 flex-1">
+            <p className="eyebrow truncate">
+              <span className="num-display text-accent-text">{session.workoutCode}</span> ·{' '}
+              {session.workoutName}
+            </p>
+            <h1 className="text-2xl font-extrabold tracking-tight mt-0.5">
+              {formatHebDateFull(session.date)}
+            </h1>
+          </div>
           <button
-            className="btn-icon !min-w-9 !min-h-9 text-fg-muted"
+            className="btn-icon !min-w-9 !min-h-9 shrink-0"
             aria-label="ערוך תאריך"
             onClick={() => {
               setDateDraft(session.date);
@@ -92,33 +186,39 @@ export function SessionDetailPage() {
           >
             <IconCalendar size={18} />
           </button>
-        </div>
-        <div className="flex flex-wrap gap-2 mt-3">
-          <div className="card-flat px-3 py-2">
-            <p className="text-2xs text-fg-muted">ציון</p>
-            <p className="num text-xl font-bold">{session.score ?? '—'}</p>
-          </div>
-          <div className="card-flat px-3 py-2">
-            <p className="text-2xs text-fg-muted">נפח</p>
-            <p className="num text-xl font-bold">
-              {(session.totalVolume ?? 0).toLocaleString('he-IL')}kg
-            </p>
-          </div>
-          {(session.prCount ?? 0) > 0 && (
-            <div className="card-flat px-3 py-2">
-              <p className="text-2xs text-fg-muted">שיאים</p>
-              <p className="num text-xl font-bold text-warn">{session.prCount}</p>
-            </div>
-          )}
+          {/* Destructive, so quiet until reached for. */}
           <button
-            className="ms-auto btn-ghost !min-h-9 !px-2 text-xs text-bad"
+            className="btn-subtle !min-h-9 !px-2 text-xs shrink-0 text-fg-ghost hover:text-bad"
             onClick={onDelete}
           >
             <IconTrash size={14} /> מחק
           </button>
         </div>
+
+        {/* The session's three figures, read left-to-right as one row. */}
+        <div className="flex gap-2 mt-3">
+          <div className="card-flat flex-1 px-3 py-2">
+            <p className="eyebrow">ציון</p>
+            <p className="num-display text-2xl mt-0.5 leading-none">{session.score ?? '—'}</p>
+          </div>
+          <div className="card-flat flex-1 px-3 py-2">
+            <p className="eyebrow">נפח</p>
+            <p className="num-display text-2xl mt-0.5 leading-none">
+              {(session.totalVolume ?? 0).toLocaleString('he-IL')}kg
+            </p>
+          </div>
+          {(session.prCount ?? 0) > 0 && (
+            <div className="card-flat flex-1 px-3 py-2">
+              <p className="eyebrow">שיאים</p>
+              <p className="num-display text-2xl mt-0.5 leading-none text-warn">
+                {session.prCount}
+              </p>
+            </div>
+          )}
+        </div>
+
         {session.notes && (
-          <p className="text-xs text-fg-muted mt-3 italic">"{session.notes}"</p>
+          <p className="field mt-3 px-3 py-2 text-xs text-fg-muted italic">"{session.notes}"</p>
         )}
       </header>
 
@@ -129,6 +229,7 @@ export function SessionDetailPage() {
               key={log.id}
               log={log}
               sets={(setsByLog.get(log.id) ?? []).sort((a, b) => a.setNumber - b.setNumber)}
+              sessionId={session.id}
               sessionDate={session.date}
               onEditSet={(s) =>
                 setEditing({ setId: s.id, weight: s.weight, reps: s.reps })
@@ -155,6 +256,7 @@ export function SessionDetailPage() {
                   weight: editing.weight === '' ? 0 : Number(editing.weight),
                   reps: editing.reps === '' ? 0 : Number(editing.reps),
                 });
+                await recomputeFrom(session.id);
                 setEditing(null);
                 toast.success('עודכן');
               }}
@@ -169,16 +271,19 @@ export function SessionDetailPage() {
             <div>
               <label className="label">משקל (kg נטו)</label>
               <NumberInput
+                ariaLabel="משקל (kg נטו)"
                 value={editing.weight}
                 onChange={(v) => setEditing({ ...editing, weight: v })}
                 step={2.5}
                 decimals={2}
+                min={0}
                 withSteppers
               />
             </div>
             <div>
               <label className="label">חזרות</label>
               <NumberInput
+                ariaLabel="חזרות"
                 value={editing.reps}
                 onChange={(v) => setEditing({ ...editing, reps: v })}
                 step={1}
@@ -205,6 +310,7 @@ export function SessionDetailPage() {
               onClick={async () => {
                 if (!dateDraft) return;
                 await db.sessions.update(session.id, { date: dateDraft });
+                await recomputeFrom(session.id);
                 toast.success('התאריך עודכן');
                 setDateEditOpen(false);
               }}
@@ -228,123 +334,129 @@ export function SessionDetailPage() {
 function ExerciseLogCard({
   log,
   sets,
+  sessionId,
   sessionDate,
   onEditSet,
 }: {
   log: { id: string; exerciseId: string; exerciseName: string; muscleGroupName: string; targetSets: number; targetRepsMin: number; targetRepsMax: number };
   sets: SetLog[];
+  sessionId: string;
   sessionDate: string;
   onEditSet: (s: SetLog) => void;
 }) {
   // compute comparison tag for this exercise relative to all prior history
   const tag = useLiveQuery(async () => {
+    // getExerciseStatsHistory is already oldest → newest with a startedAt tiebreak.
     const allStats = await getExerciseStatsHistory(log.exerciseId);
-    const sortByDate = [...allStats].sort((a, b) => (a.date < b.date ? -1 : 1));
-    const target = sortByDate.findIndex((s) => s.date === sessionDate && s.exerciseId === log.exerciseId);
-    if (target < 0) return null;
-    const cur = sortByDate[target];
+    const target = allStats.findIndex((s) => s.sessionId === sessionId);
+    const cur = allStats[target];
     if (!cur) return null;
-    const prev = target > 0 ? sortByDate[target - 1]! : null;
-    const allPrev = sortByDate.slice(0, target);
-    return compareToPrevious(cur, prev, allPrev);
-  }, [log.id, sessionDate]);
+    const allPrev = allStats.slice(0, target);
+    return compareToPrevious(cur, allPrev[allPrev.length - 1] ?? null, allPrev);
+  }, [log.id, sessionId, sessionDate]);
 
   const completedSets = sets.filter((s) => s.completed);
   const stats = statsForExercise(log.id, log.exerciseId, sessionDate, completedSets, log.targetSets);
 
   return (
-    <li className="card p-3">
-      <div className="flex items-center gap-2 mb-2">
+    <li className="card overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-line/60">
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-sm truncate">{log.exerciseName}</p>
-          <p className="text-2xs text-fg-muted">
+          <p className="text-2xs text-fg-muted truncate">
             {log.muscleGroupName} · {log.targetSets}×{log.targetRepsMin}-{log.targetRepsMax}
           </p>
         </div>
-        {tag && (
-          <span
-            className={`chip ${
-              tag.kind === 'pr'
-                ? 'border-warn/40 text-warn bg-warn-soft'
-                : tag.kind === 'up'
-                  ? 'border-good/40 text-good bg-good-soft'
-                  : tag.kind === 'down'
-                    ? 'border-bad/40 text-bad bg-bad-soft'
-                    : 'border-line text-fg-muted'
-            }`}
-          >
-            {tag.kind === 'pr' && <IconTrophy size={11} />} {tag.label}
-          </span>
-        )}
+        {tag && <ComparisonTag kind={tag.kind} label={tag.label} />}
       </div>
-      <div className="grid grid-cols-3 gap-2 mb-2">
-        <Mini label="משקל" value={`${stats.topWeight}kg`} />
-        <Mini label="נפח" value={`${stats.volume.toLocaleString('he-IL')}kg`} />
-        <Mini label="1RM" value={stats.est1RM.toFixed(1)} />
-      </div>
-      <ul className="space-y-1">
-        {sets.map((s) => (
-          <li
-            key={s.id}
-            className="flex items-center justify-between gap-2 bg-ink-900 rounded-lg px-2.5 py-1.5 text-xs"
-          >
-            <span className="num text-fg-muted">סט {s.setNumber}</span>
-            <span className="num font-semibold">
-              {s.weight}kg × {s.reps}
+
+      <div className="p-2.5">
+        <div className="grid grid-cols-3 gap-1.5 mb-2">
+          <Mini label="משקל" value={`${stats.topWeight}kg`} />
+          <Mini label="נפח" value={`${stats.volume.toLocaleString('he-IL')}kg`} />
+          <Mini label="1RM" value={stats.est1RM.toFixed(1)} />
+        </div>
+        <ul className="space-y-1">
+          {sets.map((s) => (
+            <li
+              key={s.id}
+              className="field flex items-center gap-2 ps-2.5 pe-1 py-1 text-xs rounded-lg"
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  s.completed ? 'bg-good' : 'bg-fg-ghost'
+                }`}
+                aria-hidden
+              />
+              <span className="num text-2xs text-fg-dim shrink-0">סט {s.setNumber}</span>
+              <span className="num-display ms-auto">
+                {s.weight}kg × {s.reps}
+              </span>
               {s.rpe !== undefined && (
-                <span className="text-fg-muted text-2xs ms-2">RPE {s.rpe}</span>
+                <span className="num text-2xs text-fg-dim shrink-0">RPE {s.rpe}</span>
               )}
-            </span>
-            <span
-              className={`chip ${
-                s.completed
-                  ? 'border-good/40 text-good bg-good-soft'
-                  : 'border-fg-ghost text-fg-muted'
-              }`}
-            >
-              {s.completed ? '✓' : '○'}
-            </span>
-            <button
-              className="btn-icon !min-w-7 !min-h-7"
-              aria-label="ערוך סט"
-              onClick={() => onEditSet(s)}
-            >
-              <IconEdit size={14} />
-            </button>
-            <button
-              className="btn-icon !min-w-7 !min-h-7 text-bad/80"
-              aria-label="מחק סט"
-              onClick={async () => {
-                const ok = await confirmDialog({
-                  title: 'למחוק את הסט?',
-                  destructive: true,
-                  confirmLabel: 'מחק',
-                });
-                if (!ok) return;
-                await db.setLogs.delete(s.id);
-                // recompute session totals quickly
-                const remaining = await db.setLogs.where('sessionId').equals(s.sessionId).toArray();
-                const vol = remaining.reduce(
-                  (sum, x) => (x.completed ? sum + x.weight * x.reps : sum),
-                  0,
-                );
-                await db.sessions.update(s.sessionId, { totalVolume: vol, finishedAt: now() });
-              }}
-            >
-              <IconTrash size={14} />
-            </button>
-          </li>
-        ))}
-      </ul>
+              <button
+                className="btn-icon !min-w-8 !min-h-9 shrink-0 text-fg-dim hover:text-info"
+                aria-label="ערוך סט"
+                onClick={() => onEditSet(s)}
+              >
+                <IconEdit size={14} />
+              </button>
+              <button
+                className="btn-icon !min-w-8 !min-h-9 shrink-0 text-fg-ghost hover:text-bad"
+                aria-label="מחק סט"
+                onClick={async () => {
+                  const ok = await confirmDialog({
+                    title: 'למחוק את הסט?',
+                    destructive: true,
+                    confirmLabel: 'מחק',
+                  });
+                  if (!ok) return;
+                  // Last set of the exercise → drop the exerciseLog too, or it
+                  // stays behind as a 0kg / 0-volume point in the exercise's
+                  // history and fakes PRs and stalls.
+                  const wasLastSet = sets.length === 1;
+                  await db.transaction('rw', [db.setLogs, db.exerciseLogs], async () => {
+                    await db.setLogs.delete(s.id);
+                    if (wasLastSet) await db.exerciseLogs.delete(s.exerciseLogId);
+                  });
+                  await recomputeFrom(s.sessionId);
+                }}
+              >
+                <IconTrash size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
     </li>
   );
 }
 
+/**
+ * "שיא / שיפור / ירידה" is a status, not a headline: a hairline border and a
+ * tint at a few percent, never a filled slab.
+ */
+const TAG_STYLE: Record<string, string> = {
+  pr: 'border-warn/25 bg-warn/[0.07] text-warn',
+  up: 'border-good/25 bg-good/[0.06] text-good',
+  down: 'border-bad/25 bg-bad/[0.06] text-bad',
+};
+
+function ComparisonTag({ kind, label }: { kind: string; label: string }) {
+  return (
+    <span className={`chip shrink-0 ${TAG_STYLE[kind] ?? 'border-line text-fg-dim'}`}>
+      {kind === 'pr' && <IconTrophy size={11} />} {label}
+    </span>
+  );
+}
+
+/** A figure inside a card is recessed — the card is the raised surface, not it. */
 function Mini({ label, value }: { label: string; value: string }) {
   return (
-    <div className="card-flat p-2">
-      <p className="text-2xs text-fg-muted">{label}</p>
-      <p className="num text-sm font-bold">{value}</p>
+    <div className="field px-2 py-1.5">
+      <p className="eyebrow truncate">{label}</p>
+      <p className="num-display text-sm mt-0.5">{value}</p>
     </div>
   );
 }

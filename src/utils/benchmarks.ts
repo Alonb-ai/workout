@@ -65,9 +65,16 @@ export function standardsForSex(
   return out;
 }
 
-/** Heuristic substring match from a free-form exercise name to a standard key. */
+/**
+ * Heuristic substring match from a free-form exercise name to a standard key.
+ * Variant qualifiers disqualify the name: a machine stack weight or a per-hand
+ * dumbbell weight is meaningless against free-weight barbell standards.
+ * ponytail: name-based only — rename a machine without one of these words and it
+ * will be graded as the barbell lift. Pass Exercise.isMachine in if that happens.
+ */
 export function matchStrengthLift(exerciseName: string): StrengthLift | null {
   const n = exerciseName.toLowerCase();
+  if (/machine|cable|smith|dumbbell|\bdb\b|incline|decline|close.grip/.test(n)) return null;
   if (/bench/.test(n)) return 'bench';
   if (/squat/.test(n)) return 'squat';
   if (/deadlift/.test(n)) return 'deadlift';
@@ -104,16 +111,15 @@ export function assessStrength(
   for (const lvl of levels) {
     if (ratio >= table[lvl]) current = lvl;
   }
-  const idx = levels.indexOf(current);
-  const next = idx < levels.length - 1 ? levels[idx + 1]! : null;
-  // Beginners haven't even cleared the beginner bar — surface that explicitly.
-  const cleared = ratio >= table.beginner;
+  // Next target is the lowest threshold NOT yet cleared, so someone below the
+  // beginner bar is pointed at the beginner bar and not at novice.
+  const next = levels.find((lvl) => ratio < table[lvl]) ?? null;
   return {
     lift,
     oneRm,
     bodyWeight,
     ratio: round2(ratio),
-    level: cleared ? current : 'beginner',
+    level: current,
     nextLevel: next,
     nextLevelKg: next ? round1(table[next] * bodyWeight) : null,
     sex,

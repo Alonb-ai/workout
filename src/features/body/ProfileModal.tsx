@@ -55,21 +55,31 @@ export function ProfileModal({ open, onClose, initial }: Props) {
         </>
       }
     >
-      <div className="space-y-3">
+      <div className="space-y-4">
         <div>
-          <label className="label">מין</label>
-          <div className="grid grid-cols-2 gap-2">
+          <p className="label" id="profile-sex-label">
+            מין
+          </p>
+          {/* One recessed track, the active pill riding on it — same control as
+              the segmented tabs elsewhere, not two loose buttons. */}
+          <div
+            className="seg !flex w-full"
+            role="group"
+            aria-labelledby="profile-sex-label"
+          >
             <button
               type="button"
               onClick={() => setSex('male')}
-              className={`btn !min-h-10 ${sex === 'male' ? 'bg-accent text-ink-950' : 'bg-ink-800 text-fg border border-line'}`}
+              data-active={String(sex === 'male')}
+              className="pill-tab flex-1 !min-h-11 inline-flex items-center justify-center"
             >
               זכר
             </button>
             <button
               type="button"
               onClick={() => setSex('female')}
-              className={`btn !min-h-10 ${sex === 'female' ? 'bg-accent text-ink-950' : 'bg-ink-800 text-fg border border-line'}`}
+              data-active={String(sex === 'female')}
+              className="pill-tab flex-1 !min-h-11 inline-flex items-center justify-center"
             >
               נקבה
             </button>
@@ -77,8 +87,11 @@ export function ProfileModal({ open, onClose, initial }: Props) {
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="label">גובה (cm)</label>
+            <label className="label" htmlFor="profile-height">
+              גובה (cm)
+            </label>
             <NumberInput
+              id="profile-height"
               value={heightCm}
               onChange={setHeightCm}
               min={120}
@@ -86,11 +99,15 @@ export function ProfileModal({ open, onClose, initial }: Props) {
               decimals={0}
               step={1}
               placeholder="—"
+              suffix="cm"
             />
           </div>
           <div>
-            <label className="label">שנת לידה</label>
+            <label className="label" htmlFor="profile-birth-year">
+              שנת לידה
+            </label>
             <NumberInput
+              id="profile-birth-year"
               value={birthYear}
               onChange={setBirthYear}
               min={1900}
@@ -101,7 +118,7 @@ export function ProfileModal({ open, onClose, initial }: Props) {
             />
           </div>
         </div>
-        <p className="text-2xs text-fg-muted">
+        <p className="text-2xs text-fg-dim">
           המידע ישמש לחישוב FFMI, סטנדרטי כוח ויחסי גוף. נשמר רק במכשיר שלך,
           אופציונלי לחלוטין — אפשר לדלג.
         </p>
