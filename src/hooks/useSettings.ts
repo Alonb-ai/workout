@@ -10,6 +10,10 @@ export function useSettings(): AppSettings {
 }
 
 export async function updateSettings(patch: Partial<AppSettings>): Promise<void> {
-  const cur = await ensureSettings();
-  await db.settings.put({ ...cur, ...patch });
+  // One rw transaction so overlapping calls serialise — otherwise both read the
+  // same row and the second put silently drops the first patch.
+  await db.transaction('rw', db.settings, async () => {
+    const cur = await ensureSettings();
+    await db.settings.put({ ...cur, ...patch });
+  });
 }

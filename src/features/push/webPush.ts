@@ -1,6 +1,7 @@
 import { db, newId } from '@/db/db';
 import { ensureSettings } from '@/db/seed';
 import { updateSettings } from '@/hooks/useSettings';
+import { notifyPermissionChanged } from '@/hooks/useNotifications';
 import type { AppSettings } from '@/types';
 
 /**
@@ -42,6 +43,13 @@ function urlBase64ToArrayBuffer(b64: string): ArrayBuffer {
   const view = new Uint8Array(out);
   for (let i = 0; i < raw.length; i++) view[i] = raw.charCodeAt(i);
   return out;
+}
+
+function sameKey(a: ArrayBuffer | null, b: ArrayBuffer): boolean {
+  if (!a || a.byteLength !== b.byteLength) return false;
+  const x = new Uint8Array(a);
+  const y = new Uint8Array(b);
+  return x.every((v, i) => v === y[i]);
 }
 
 async function getOrCreateClientId(settings: AppSettings): Promise<string> {
@@ -100,18 +108,28 @@ export async function enablePush(settings: AppSettings): Promise<PushConfigError
 
   // Permission
   let perm = Notification.permission;
-  if (perm === 'default') perm = await Notification.requestPermission();
+  if (perm === 'default') {
+    perm = await Notification.requestPermission();
+    notifyPermissionChanged();
+  }
   if (perm !== 'granted') {
     return { reason: 'no-permission', message: 'ההרשאה להתראות נדחתה.' };
   }
 
+  const wantedKey = urlBase64ToArrayBuffer(settings.pushVapidPublicKey);
   const reg = await navigator.serviceWorker.ready;
   let sub = await reg.pushManager.getSubscription();
+  // A subscription bound to a different (e.g. mistyped) VAPID key makes the
+  // backend's pushes 403 forever — drop it and re-subscribe with the current key.
+  if (sub && !sameKey(sub.options.applicationServerKey, wantedKey)) {
+    await sub.unsubscribe().catch(() => {});
+    sub = null;
+  }
   if (!sub) {
     try {
       sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToArrayBuffer(settings.pushVapidPublicKey),
+        applicationServerKey: wantedKey,
       });
     } catch (e) {
       console.error('pushManager.subscribe failed', e);

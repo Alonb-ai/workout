@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Section } from '@/components/Section';
 import { Modal } from '@/components/Modal';
 import { NumberInput } from '@/components/NumberInput';
@@ -10,14 +10,82 @@ import {
   IconRefresh,
   IconTrash,
   IconUpload,
-  IconWarn,
 } from '@/components/Icon';
+import { cn } from '@/utils/cn';
 import { useSettings, updateSettings } from '@/hooks/useSettings';
 import { toast } from '@/store/toast';
 import { confirmDialog } from '@/components/Confirm';
-import { exportAll, importAll, wipeAll } from './backup';
+import { exportAll, importAll, summarizeBackup, wipeAll } from './backup';
 import { useNotificationPermission, useRequestNotificationPermission } from '@/hooks/useNotifications';
 import { seedIfNeeded } from '@/db/seed';
+
+/**
+ * One line of a settings list: the label carries the meaning on the leading
+ * edge, the control is aligned to the trailing edge of every row so the whole
+ * column can be scanned in one pass.
+ */
+function Row({
+  title,
+  sub,
+  children,
+}: {
+  title: string;
+  sub?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <li className="flex items-center gap-3 px-3 py-2.5 min-h-[56px]">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium">{title}</p>
+        {sub && <p className="text-2xs text-fg-dim mt-0.5">{sub}</p>}
+      </div>
+      <div className="shrink-0 flex items-center gap-2">{children}</div>
+    </li>
+  );
+}
+
+/**
+ * A switch rather than a checkbox: the track is a recessed groove and the knob
+ * rides on it, which is the same lit/carved logic the rest of the app uses. The
+ * real <input> stays in the DOM (screen-reader only) so the label still names it.
+ */
+function ToggleRow({
+  title,
+  sub,
+  checked,
+  onChange,
+}: {
+  title: string;
+  sub?: ReactNode;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <li>
+      <label className="flex items-center gap-3 px-3 py-2.5 min-h-[56px] cursor-pointer">
+        <span className="flex-1 min-w-0">
+          <span className="block text-sm font-medium">{title}</span>
+          {sub && <span className="block text-2xs text-fg-dim mt-0.5">{sub}</span>}
+        </span>
+        <input
+          type="checkbox"
+          className="peer sr-only"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span
+          aria-hidden
+          className="relative h-7 w-12 shrink-0 field rounded-full transition-colors duration-150
+                     peer-checked:bg-accent peer-checked:border-accent peer-checked:shadow-accent-lift
+                     peer-focus-visible:ring-2 peer-focus-visible:ring-accent-ring
+                     peer-checked:[&>span]:start-[1.375rem] peer-checked:[&>span]:bg-ink-950"
+        >
+          <span className="absolute top-1/2 -translate-y-1/2 start-1 h-5 w-5 rounded-full bg-fg-dim transition-[inset-inline-start,background-color] duration-150" />
+        </span>
+      </label>
+    </li>
+  );
+}
 
 export function SettingsPage() {
   const settings = useSettings();
@@ -27,6 +95,8 @@ export function SettingsPage() {
 
   const permission = useNotificationPermission();
   const requestPerm = useRequestNotificationPermission();
+
+  const notificationsOn = settings.notificationsEnabled && permission === 'granted';
 
   const enableNotifications = async () => {
     const res = await requestPerm();
@@ -63,10 +133,14 @@ export function SettingsPage() {
     const a = document.createElement('a');
     a.href = url;
     a.download = `iron-track-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    // Revoke after the browser has had a chance to start reading the blob.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
     await updateSettings({ lastBackupAt: Date.now() });
-    toast.success('הגיבוי הורד');
+    // ponytail: a browser download gives no completion signal — say what we know.
+    toast.success('קובץ הגיבוי נשלח להורדה — ודא שנשמר');
   };
 
   const onPickImport = () => fileInputRef.current?.click();
@@ -75,23 +149,10 @@ export function SettingsPage() {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text) as unknown;
-      const counts: Record<string, number> = {};
-      const data = parsed as Record<string, unknown>;
-      for (const key of [
-        'plans',
-        'workouts',
-        'muscleGroups',
-        'exercises',
-        'sessions',
-        'exerciseLogs',
-        'setLogs',
-        'supplements',
-        'supplementLogs',
-      ]) {
-        const arr = data[key];
-        counts[key] = Array.isArray(arr) ? arr.length : 0;
-      }
-      setImportPreview({ counts, raw: parsed });
+      // Counted off db.tables by summarizeBackup, so a table added by a future
+      // schema version shows up here automatically instead of silently reading
+      // as zero rows.
+      setImportPreview({ counts: summarizeBackup(parsed), raw: parsed });
     } catch (e) {
       console.error(e);
       toast.error('הקובץ לא תקין');
@@ -107,7 +168,9 @@ export function SettingsPage() {
       setImportPreview(null);
     } catch (e) {
       console.error(e);
-      toast.error('הייבוא נכשל');
+      // importAll validates before touching the DB and throws a Hebrew reason
+      // ("not an Iron Track backup" / "empty backup") — show it, it's actionable.
+      toast.error(e instanceof Error ? e.message : 'הייבוא נכשל');
     } finally {
       setImporting(false);
     }
@@ -128,190 +191,161 @@ export function SettingsPage() {
 
   return (
     <div className="pt-3">
-      <header className="mb-3">
-        <p className="text-2xs uppercase tracking-wider text-fg-muted">הגדרות</p>
-        <h1 className="text-2xl font-extrabold">העדפות והנתונים</h1>
+      <header className="mb-4 px-1">
+        <p className="eyebrow">הגדרות</p>
+        <h1 className="text-2xl font-extrabold tracking-tight mt-0.5">העדפות והנתונים</h1>
       </header>
 
-      <Section title="כללי">
-        <div className="card p-3 space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-semibold">יחידת משקל</p>
-              <p className="text-2xs text-fg-muted">מומלץ ק״ג</p>
-            </div>
-            <div className="flex gap-1">
-              {(['kg', 'lb'] as const).map((u) => (
-                <button
-                  key={u}
-                  data-active={settings.unit === u}
-                  className="pill-tab"
-                  onClick={() => updateSettings({ unit: u })}
-                >
-                  {u === 'kg' ? 'ק״ג' : 'פאונד'}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="divider" />
-
-          <div>
-            <p className="text-sm font-semibold mb-1">מנוחה ברירת מחדל</p>
-            <div className="flex items-center gap-2">
-              <NumberInput
-                value={settings.restTimerDefaultSec}
-                onChange={(v) =>
-                  updateSettings({ restTimerDefaultSec: v === '' ? 60 : Math.max(15, Number(v)) })
-                }
-                step={15}
-                min={15}
-                withSteppers
-                decimals={0}
-              />
-              <span className="text-xs text-fg-muted">שניות</span>
-            </div>
-          </div>
-
-          <div className="divider" />
-
-          <label className="flex items-center gap-3">
-            <input
-              type="checkbox"
-              className="w-5 h-5 accent-orange-500"
-              checked={settings.restTimerSound}
-              onChange={(e) => updateSettings({ restTimerSound: e.target.checked })}
-            />
-            <span className="text-sm">צליל + רטט בסיום מנוחה</span>
-          </label>
-        </div>
-      </Section>
-
-      <Section title="התראות תוספים">
-        <div className="card p-3 flex items-center gap-3">
-          <span
-            className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-              settings.notificationsEnabled && permission === 'granted'
-                ? 'bg-good text-ink-950'
-                : 'bg-ink-700 text-fg-muted'
-            }`}
-          >
-            <IconBell />
-          </span>
-          <div className="flex-1">
-            <p className="text-sm font-semibold">
-              {settings.notificationsEnabled && permission === 'granted' ? 'פעיל' : 'כבוי'}
-            </p>
-            <p className="text-2xs text-fg-muted">
-              ב-iOS דרושה התקנה כ-PWA (הוסף למסך הבית) כדי שהתראות יעבדו.
-            </p>
-          </div>
-          {permission !== 'granted' || !settings.notificationsEnabled ? (
-            <button className="btn-primary !min-h-9 !px-2 text-xs" onClick={enableNotifications}>
-              הפעל
-            </button>
-          ) : (
-            <button
-              className="btn-ghost !min-h-9 !px-2 text-xs"
-              onClick={() => updateSettings({ notificationsEnabled: false })}
-            >
-              כבה
-            </button>
-          )}
-        </div>
-      </Section>
-
-      <Section
-        title="תזכורת שבועית למדידת גוף"
-        description="התראה אחת בשבוע למדידת משקל ו-InBody — מדלגת אם כבר רשמת מדידה היום."
-      >
-        <div className="card p-3 space-y-3">
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="w-5 h-5 accent-orange-500"
-              checked={settings.bodyReminderEnabled ?? false}
-              onChange={(e) =>
-                updateSettings({ bodyReminderEnabled: e.target.checked })
+      <Section title="אימון">
+        <ul className="card divide-y divide-line overflow-hidden">
+          <Row title="מנוחה ברירת מחדל" sub="שניות · נטענת בכל תרגיל שאין לו זמן משלו">
+            <NumberInput
+              value={settings.restTimerDefaultSec}
+              onChange={(v) =>
+                updateSettings({ restTimerDefaultSec: v === '' ? 60 : Math.max(15, Number(v)) })
               }
+              step={15}
+              min={15}
+              withSteppers
+              decimals={0}
+              className="w-40"
             />
-            הפעל תזכורת שבועית
-          </label>
-          {settings.bodyReminderEnabled && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">יום</label>
-                <select
-                  className="input"
-                  value={settings.bodyReminderDow ?? 0}
-                  onChange={(e) =>
-                    updateSettings({ bodyReminderDow: Number(e.target.value) })
-                  }
-                >
-                  <option value={0}>ראשון</option>
-                  <option value={1}>שני</option>
-                  <option value={2}>שלישי</option>
-                  <option value={3}>רביעי</option>
-                  <option value={4}>חמישי</option>
-                  <option value={5}>שישי</option>
-                  <option value={6}>שבת</option>
-                </select>
-              </div>
-              <div>
-                <label className="label">שעה</label>
-                <input
-                  type="time"
-                  className="input"
-                  value={settings.bodyReminderTime ?? '09:00'}
-                  onChange={(e) =>
-                    updateSettings({ bodyReminderTime: e.target.value })
-                  }
-                />
-              </div>
+          </Row>
+          <ToggleRow
+            title="צליל + רטט בסיום מנוחה"
+            sub="נשמע גם כשהמסך כבוי, כל עוד האפליקציה בחזית"
+            checked={settings.restTimerSound}
+            onChange={(v) => updateSettings({ restTimerSound: v })}
+          />
+        </ul>
+      </Section>
+
+      <Section title="התראות">
+        <div className="card overflow-hidden">
+          <div className="flex items-center gap-3 px-3 py-3">
+            <span
+              className={cn(
+                'w-10 h-10 rounded-xl flex items-center justify-center shrink-0',
+                notificationsOn
+                  ? 'bg-good/[0.12] text-good border border-good/30'
+                  : 'bg-ink-800 text-fg-dim border border-line-muted',
+              )}
+            >
+              <IconBell />
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="eyebrow">התראות תוספים</p>
+              <p className={cn('text-sm font-semibold mt-0.5', notificationsOn && 'text-good')}>
+                {notificationsOn ? 'פעיל' : 'כבוי'}
+              </p>
             </div>
-          )}
-          <p className="text-2xs text-fg-muted">
-            דורש גם הפעלת "התראות תוספים" למעלה (משתמש באותו ערוץ הרשאה).
+            {!notificationsOn ? (
+              <button className="btn-primary !min-h-10 text-xs" onClick={enableNotifications}>
+                הפעל
+              </button>
+            ) : (
+              <button
+                className="btn-ghost !min-h-10 text-xs"
+                onClick={() => updateSettings({ notificationsEnabled: false })}
+              >
+                כבה
+              </button>
+            )}
+          </div>
+          <p className="px-3 pb-3 text-2xs text-fg-dim">
+            ב-iOS דרושה התקנה כ-PWA (הוסף למסך הבית) כדי שהתראות יעבדו.
           </p>
         </div>
+
+        <ul className="card divide-y divide-line overflow-hidden mt-2">
+          <ToggleRow
+            title="תזכורת שבועית למדידת גוף"
+            sub="מדלגת אם כבר רשמת מדידה באותו יום"
+            checked={settings.bodyReminderEnabled ?? false}
+            onChange={(v) => updateSettings({ bodyReminderEnabled: v })}
+          />
+          {settings.bodyReminderEnabled && (
+            <li className="px-3 py-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label" htmlFor="body-reminder-dow">
+                    יום
+                  </label>
+                  <select
+                    id="body-reminder-dow"
+                    className="input"
+                    value={settings.bodyReminderDow ?? 0}
+                    onChange={(e) => updateSettings({ bodyReminderDow: Number(e.target.value) })}
+                  >
+                    <option value={0}>ראשון</option>
+                    <option value={1}>שני</option>
+                    <option value={2}>שלישי</option>
+                    <option value={3}>רביעי</option>
+                    <option value={4}>חמישי</option>
+                    <option value={5}>שישי</option>
+                    <option value={6}>שבת</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label" htmlFor="body-reminder-time">
+                    שעה
+                  </label>
+                  <input
+                    id="body-reminder-time"
+                    type="time"
+                    className="input"
+                    value={settings.bodyReminderTime ?? '09:00'}
+                    onChange={(e) => updateSettings({ bodyReminderTime: e.target.value })}
+                  />
+                </div>
+              </div>
+              <p className="text-2xs text-fg-dim mt-2">
+                דורש גם הפעלת "התראות תוספים" למעלה (משתמש באותו ערוץ הרשאה).
+              </p>
+            </li>
+          )}
+        </ul>
       </Section>
 
       <Section
         title="מלאי פלטות"
         description="לחישוב פלטות בלבד. כמות = מספר הפלטות הכולל שברשותך (לא זוגות)."
       >
-        <ul className="card p-3 space-y-2">
+        <ul className="card divide-y divide-line overflow-hidden">
+          <li className="flex items-center gap-2 px-3 pt-2.5 pb-1.5">
+            <span className="eyebrow w-24">משקל</span>
+            <span className="eyebrow flex-1">כמות</span>
+          </li>
           {settings.plateInventory
             .slice()
             .sort((a, b) => b.weight - a.weight)
             .map((p) => {
               const idx = settings.plateInventory.indexOf(p);
               return (
-                <li key={idx} className="flex items-center gap-2">
+                <li key={idx} className="flex items-center gap-2 px-3 py-2">
                   <NumberInput
                     value={p.weight}
-                    onChange={(v) =>
-                      onChangePlate(idx, v === '' ? 0 : Number(v), p.qty)
-                    }
+                    onChange={(v) => onChangePlate(idx, v === '' ? 0 : Number(v), p.qty)}
+                    ariaLabel="משקל פלטה (kg)"
                     suffix="kg"
                     step={0.25}
                     decimals={2}
                     min={0.25}
-                    className="w-28"
+                    className="w-24"
                   />
                   <NumberInput
                     value={p.qty}
-                    onChange={(v) =>
-                      onChangePlate(idx, p.weight, v === '' ? 0 : Number(v))
-                    }
+                    onChange={(v) => onChangePlate(idx, p.weight, v === '' ? 0 : Number(v))}
+                    ariaLabel={`כמות פלטות של ${p.weight} ק״ג`}
                     step={1}
                     decimals={0}
                     min={0}
-                    className="w-24"
+                    className="w-32"
                     withSteppers
                   />
+                  {/* Red when you reach for it, not while you read the list. */}
                   <button
-                    className="btn-icon !min-w-9 !min-h-9 text-bad/80 ms-auto"
+                    className="btn-icon !min-w-11 text-fg-ghost hover:text-bad ms-auto"
                     aria-label="מחק"
                     onClick={() => onRemovePlate(idx)}
                   >
@@ -321,80 +355,20 @@ export function SettingsPage() {
               );
             })}
           <li>
-            <button className="btn-subtle !min-h-9 !px-2 text-xs w-full" onClick={onAddPlate}>
-              <IconPlus size={14} /> הוסף פלטה
+            <button
+              className="btn-subtle w-full !justify-start text-xs text-accent-text"
+              onClick={onAddPlate}
+            >
+              <IconPlus size={16} /> הוסף פלטה
             </button>
           </li>
         </ul>
-        <div className="card-flat p-3 mt-2 text-2xs text-fg-muted flex items-start gap-2">
-          <IconWarn size={14} className="text-warn shrink-0 mt-0.5" />
-          <span>
-            המשקלים שאתה רושם הם תמיד <strong className="text-fg">נטו</strong> — פלטות/סטאק בלבד, ללא משקל המוט.
-            שדה משקל המוט בכל תרגיל משמש <strong className="text-fg">אך ורק</strong> לחישוב הפלטות.
-          </span>
-        </div>
-      </Section>
-
-      <Section
-        title="פוש לרקע (Cloudflare Worker)"
-        description="התראות אמיתיות שמגיעות גם כשהאפליקציה סגורה לחלוטין. נדרשת התקנת Worker ב-Cloudflare — ראו worker/README.md."
-      >
-        <div className="card p-3 space-y-3">
-          <div>
-            <label className="label">Backend URL</label>
-            <input
-              className="input text-xs num"
-              placeholder="https://iron-track-push.<subdomain>.workers.dev"
-              value={settings.pushBackendUrl ?? ''}
-              onChange={(e) => updateSettings({ pushBackendUrl: e.target.value.trim() })}
-              spellCheck={false}
-              autoCapitalize="none"
-              autoCorrect="off"
-            />
-          </div>
-          <div>
-            <label className="label">VAPID Public Key</label>
-            <input
-              className="input text-xs num"
-              placeholder="הדבק כאן את המפתח שהדפיס scripts/generateVapid.ts"
-              value={settings.pushVapidPublicKey ?? ''}
-              onChange={(e) => updateSettings({ pushVapidPublicKey: e.target.value.trim() })}
-              spellCheck={false}
-              autoCapitalize="none"
-              autoCorrect="off"
-            />
-          </div>
-          <div>
-            <label className="label">Shared Secret (אופציונלי)</label>
-            <input
-              className="input text-xs num"
-              placeholder="רק אם הגדרתם SHARED_SECRET ב-Worker"
-              value={settings.pushSharedSecret ?? ''}
-              onChange={(e) => updateSettings({ pushSharedSecret: e.target.value.trim() })}
-              spellCheck={false}
-              autoCapitalize="none"
-              autoCorrect="off"
-            />
-          </div>
-          <div className="text-2xs text-fg-muted bg-ink-900 rounded-xl p-2.5 border border-line space-y-1">
-            <p>
-              <strong className="text-fg">סטטוס:</strong>{' '}
-              {settings.pushSubscribed ? (
-                <span className="text-good">פעיל</span>
-              ) : (
-                <span className="text-fg-muted">לא פעיל</span>
-              )}
-              {settings.pushLastSyncAt ? (
-                <span className="ms-2 text-fg-muted">
-                  · עודכן: {new Date(settings.pushLastSyncAt).toLocaleString('he-IL')}
-                </span>
-              ) : null}
-            </p>
-            <p>
-              ההפעלה והבדיקה עצמן מתבצעות מעמוד התוספים → כפתור "הפעל פוש לרקע".
-            </p>
-          </div>
-        </div>
+        <p className="relative mt-2 ps-3 text-2xs text-fg-dim leading-relaxed">
+          <span className="absolute inset-y-0 start-0 w-[3px] rounded-full bg-warn/70" aria-hidden />
+          המשקלים שאתה רושם הם תמיד <strong className="text-fg">נטו</strong> — פלטות/סטאק בלבד,
+          ללא משקל המוט. שדה משקל המוט בכל תרגיל משמש{' '}
+          <strong className="text-fg">אך ורק</strong> לחישוב הפלטות.
+        </p>
       </Section>
 
       <Section title="גיבוי ונתונים">
@@ -405,11 +379,11 @@ export function SettingsPage() {
           <button className="btn-ghost w-full" onClick={onPickImport}>
             <IconUpload size={16} /> ייבוא מקובץ…
           </button>
-          {settings.lastBackupAt && (
-            <p className="text-2xs text-fg-muted text-center">
-              גיבוי אחרון: {new Date(settings.lastBackupAt).toLocaleString('he-IL')}
-            </p>
-          )}
+          <p className="text-2xs text-fg-dim text-center pt-0.5">
+            {settings.lastBackupAt
+              ? `גיבוי אחרון: ${new Date(settings.lastBackupAt).toLocaleString('he-IL')}`
+              : 'עוד לא יצא גיבוי מהמכשיר הזה'}
+          </p>
           <input
             ref={fileInputRef}
             type="file"
@@ -424,10 +398,98 @@ export function SettingsPage() {
         </div>
       </Section>
 
-      <Section title="איפוס">
-        <button className="btn w-full bg-bad-soft text-bad border border-bad/40" onClick={onReset}>
-          <IconRefresh size={16} /> אפס את כל הנתונים
-        </button>
+      <Section
+        title="פוש לרקע (Cloudflare Worker)"
+        description="התראות שמגיעות גם כשהאפליקציה סגורה. נדרשת התקנת Worker — ראו worker/README.md."
+      >
+        <div className="card p-3 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="eyebrow">סטטוס</span>
+            <span className="flex items-center gap-2">
+              {settings.pushLastSyncAt ? (
+                <span className="text-2xs text-fg-dim">
+                  עודכן {new Date(settings.pushLastSyncAt).toLocaleString('he-IL')}
+                </span>
+              ) : null}
+              <span
+                className={cn(
+                  'chip',
+                  settings.pushSubscribed
+                    ? 'border-good/40 text-good bg-good/[0.08]'
+                    : 'border-line text-fg-muted',
+                )}
+              >
+                {settings.pushSubscribed ? 'פעיל' : 'לא פעיל'}
+              </span>
+            </span>
+          </div>
+          <div>
+            <label className="label" htmlFor="push-backend-url">
+              Backend URL
+            </label>
+            <input
+              id="push-backend-url"
+              className="input text-xs num"
+              placeholder="https://iron-track-push.<subdomain>.workers.dev"
+              value={settings.pushBackendUrl ?? ''}
+              onChange={(e) => updateSettings({ pushBackendUrl: e.target.value.trim() })}
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </div>
+          <div>
+            <label className="label" htmlFor="push-vapid-key">
+              VAPID Public Key
+            </label>
+            <input
+              id="push-vapid-key"
+              className="input text-xs num"
+              placeholder="הדבק כאן את המפתח שהדפיס scripts/generateVapid.ts"
+              value={settings.pushVapidPublicKey ?? ''}
+              onChange={(e) => updateSettings({ pushVapidPublicKey: e.target.value.trim() })}
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </div>
+          <div>
+            <label className="label" htmlFor="push-shared-secret">
+              Shared Secret (אופציונלי)
+            </label>
+            <input
+              id="push-shared-secret"
+              className="input text-xs num"
+              placeholder="רק אם הגדרתם SHARED_SECRET ב-Worker"
+              value={settings.pushSharedSecret ?? ''}
+              onChange={(e) => updateSettings({ pushSharedSecret: e.target.value.trim() })}
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </div>
+          <p className="text-2xs text-fg-dim">
+            ההפעלה והבדיקה עצמן מתבצעות מעמוד התוספים → כפתור "הפעל פוש לרקע".
+          </p>
+        </div>
+      </Section>
+
+      {/* Kept away from everything else, and reading as dangerous without a
+          block of red shouting at the user on every visit. */}
+      <Section title="אזור מסוכן">
+        <div className="card relative overflow-hidden p-3 ps-4 bg-bad/[0.05]">
+          <span className="absolute inset-y-0 start-0 w-[3px] bg-bad" aria-hidden />
+          <p className="text-sm font-semibold">איפוס האפליקציה</p>
+          <p className="text-2xs text-fg-dim mt-1 mb-3">
+            מוחק תכניות, אימונים, היסטוריה ותוספים מהמכשיר הזה. לא ניתן לבטל — ייצאו גיבוי קודם.
+          </p>
+          <button
+            className="btn w-full bg-transparent border border-bad/40 text-bad hover:bg-bad/[0.1]"
+            onClick={onReset}
+          >
+            <IconRefresh size={16} /> אפס את כל הנתונים
+          </button>
+        </div>
       </Section>
 
       <Modal
@@ -446,15 +508,16 @@ export function SettingsPage() {
         }
       >
         {importPreview && (
-          <div className="space-y-2">
-            <p className="text-xs text-fg-muted">
+          <div className="space-y-3">
+            <p className="relative ps-3 text-xs text-fg-muted">
+              <span className="absolute inset-y-0 start-0 w-[3px] rounded-full bg-warn" aria-hidden />
               הייבוא יחליף את כל הנתונים הקיימים. מומלץ לייצא קודם גיבוי נוכחי.
             </p>
-            <ul className="text-sm space-y-1">
+            <ul className="card-flat divide-y divide-line overflow-hidden">
               {Object.entries(importPreview.counts).map(([k, v]) => (
-                <li key={k} className="flex justify-between border-b border-line py-1">
-                  <span>{k}</span>
-                  <span className="num">{v}</span>
+                <li key={k} className="flex justify-between items-center px-3 py-2 text-sm">
+                  <span className="text-fg-muted">{k}</span>
+                  <span className="num-display">{v}</span>
                 </li>
               ))}
             </ul>

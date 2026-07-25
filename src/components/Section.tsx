@@ -5,22 +5,25 @@ interface SectionProps {
   action?: ReactNode;
   children: ReactNode;
   description?: ReactNode;
-  noPad?: boolean;
 }
 
-export function Section({ title, action, description, children, noPad }: SectionProps) {
+/**
+ * A titled block. The header is a quiet eyebrow with an optional action on the
+ * opposite edge — it labels the content below rather than competing with it.
+ */
+export function Section({ title, action, description, children }: SectionProps) {
   return (
-    <section className="mb-5">
+    <section className="mb-6">
       {(title || action) && (
-        <div className="flex items-center justify-between mb-2 px-1">
-          <div>
-            {title && <h2 className="text-sm font-semibold text-fg">{title}</h2>}
-            {description && <p className="text-2xs text-fg-muted mt-0.5">{description}</p>}
+        <div className="mb-2 flex items-end justify-between gap-3 px-1">
+          <div className="min-w-0">
+            {title && <h2 className="eyebrow">{title}</h2>}
+            {description && <p className="mt-1 text-2xs text-fg-dim">{description}</p>}
           </div>
-          {action}
+          {action && <div className="shrink-0">{action}</div>}
         </div>
       )}
-      <div className={noPad ? '' : ''}>{children}</div>
+      {children}
     </section>
   );
 }

@@ -22,9 +22,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Must match the npm major the lockfile was generated with: npm 10 and
+      # npm 11 build different dependency trees for the same package.json, and
+      # `npm ci` refuses a lockfile shaped by the other one.
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
 
       - name: Install dependencies

@@ -6,14 +6,23 @@ import type {
   Session,
   SetLog,
   ExerciseLog,
+  ExerciseSessionStats,
 } from '@/types';
-import type { DraftExercise } from './types';
+import type { DraftExercise, WorkoutDraft } from './types';
 import {
   computeWorkoutScore,
   statsForExercise,
   compareToPrevious,
   totalVolume as setsVolume,
 } from '@/utils/scoring';
+import {
+  prescribe,
+  resolveIncrement,
+  pastSetsFromLogs,
+  formatLastSets,
+  type PastSet,
+} from '@/utils/progression';
+import { detectStall } from '@/utils/stall';
 import { getExerciseStatsHistory, getRecentWorkoutSessions } from '@/db/queries';
 
 /** Build an initial draft for the workout by pulling last-session values. */
@@ -41,40 +50,65 @@ export async function buildDraftFromWorkout(
   return { workout, drafts };
 }
 
+/** The sets logged for this exercise in its most recent completed session. */
+async function lastSessionSets(
+  exerciseId: string,
+  stats: ExerciseSessionStats[],
+): Promise<PastSet[]> {
+  if (stats.length === 0) return [];
+  const lastSessionId = stats[stats.length - 1]!.sessionId;
+  const logs = await db.exerciseLogs.where('sessionId').equals(lastSessionId).toArray();
+  const log = logs.find((l) => l.exerciseId === exerciseId);
+  if (!log) return [];
+  const sets = (await db.setLogs.where('exerciseLogId').equals(log.id).toArray()).sort(
+    (a, b) => a.setNumber - b.setNumber,
+  );
+  return pastSetsFromLogs(sets);
+}
+
 export async function buildDraftForExercise(
   ex: Exercise,
   group: MuscleGroup,
 ): Promise<DraftExercise> {
   const stats = await getExerciseStatsHistory(ex.id);
-  let ghostSets: { weight: number; reps: number }[] = [];
-  if (stats.length > 0) {
-    const lastSessionId = stats[stats.length - 1]!.sessionId;
-    const logs = await db.exerciseLogs.where('sessionId').equals(lastSessionId).toArray();
-    const log = logs.find((l) => l.exerciseId === ex.id);
-    if (log) {
-      const sets = (
-        await db.setLogs.where('exerciseLogId').equals(log.id).toArray()
-      ).sort((a, b) => a.setNumber - b.setNumber);
-      ghostSets = sets.map((s) => ({ weight: s.weight, reps: s.reps }));
-    }
-  }
+  const lastSets = await lastSessionSets(ex.id, stats);
+  const settings = await db.settings.get('singleton');
 
-  const setCount = Math.max(ghostSets.length, ex.targetSets);
-  const sets = Array.from({ length: setCount }, (_, i) => {
-    const g = ghostSets[i];
-    const useSeed = ex.seedWeight !== undefined && !g && i === 0;
-    return {
-      setNumber: i + 1,
-      weight: '' as number | '',
-      reps: '' as number | '',
-      completed: false,
-      ...(g
-        ? { ghostWeight: g.weight, ghostReps: g.reps }
-        : useSeed
-          ? { ghostWeight: ex.seedWeight as number, ghostReps: ex.targetRepsMin }
-          : {}),
-    };
+  const increment = resolveIncrement({
+    ...(ex.incrementKg !== undefined ? { incrementKg: ex.incrementKg } : {}),
+    ...(ex.isMachine ? { isMachine: true } : {}),
+    inventory: settings?.plateInventory ?? [],
   });
+
+  const prescription = prescribe({
+    lastSets,
+    targetSets: ex.targetSets,
+    repsMin: ex.targetRepsMin,
+    repsMax: ex.targetRepsMax,
+    increment,
+    isStalled: detectStall(stats, ex.name) !== null,
+    ...(ex.seedWeight !== undefined ? { seedWeight: ex.seedWeight } : {}),
+  });
+
+  // Every set is pre-loaded with the prescription as ghost text, so tapping ✓
+  // logs exactly what the app told the user to do. Typing over it still wins.
+  //
+  // Exception: a first-ever session with no seed weight has nothing to
+  // prescribe. Leaving ghost reps there would let one tap log a 0 kg set, so we
+  // leave the row blank and the ✓ disabled until a weight is entered. Once
+  // history exists, a 0 kg top set means genuine bodyweight work and the ghost
+  // is correct.
+  const hasPrescription = prescription.kind !== 'first' || prescription.weight > 0;
+  const sets = Array.from({ length: ex.targetSets }, (_, i) => ({
+    setNumber: i + 1,
+    weight: '' as number | '',
+    reps: '' as number | '',
+    completed: false,
+    ...(prescription.weight > 0 ? { ghostWeight: prescription.weight } : {}),
+    ...(hasPrescription ? { ghostReps: prescription.reps } : {}),
+  }));
+
+  const lastSummary = formatLastSets(lastSets);
 
   return {
     exerciseId: ex.id,
@@ -89,51 +123,119 @@ export async function buildDraftForExercise(
     defaultRestSec: ex.defaultRestSec,
     ...(ex.notes ? { notes: ex.notes } : {}),
     ...(ex.seedWeight !== undefined ? { seedWeight: ex.seedWeight } : {}),
+    ...(ex.incrementKg !== undefined ? { incrementKg: ex.incrementKg } : {}),
     order: ex.order,
     sets,
+    prescription,
+    ...(lastSummary ? { lastSummary } : {}),
   };
 }
 
-/** Pre-fill all draft sets with the exact weights/reps from the last session. */
-export async function applyRepeatLastSession(
+/**
+ * Bring a restored draft back in line with the current plan.
+ *
+ * A draft is a snapshot, so editing the plan while a session sat open used to
+ * be invisible in the logger: the renamed lift kept its old name, a newly added
+ * exercise never appeared, and a raised set count did nothing.
+ *
+ * Only additive and display-level changes are applied — names, targets, rest,
+ * bar weight, increment, and appending exercises added to the plan. Logged sets
+ * are never touched and an exercise removed from the plan is kept in the draft,
+ * because it may already hold work.
+ */
+export async function reconcileDraftWithPlan(
   workoutId: string,
   drafts: DraftExercise[],
 ): Promise<DraftExercise[]> {
-  const sessions = await db.sessions.where('workoutId').equals(workoutId).toArray();
-  const completed = sessions
-    .filter((s) => s.status === 'completed')
-    .sort((a, b) => {
-      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
-      return (b.startedAt ?? 0) - (a.startedAt ?? 0);
-    });
-  const last = completed[0];
-  if (!last) return drafts;
+  const groups = (
+    await db.muscleGroups.where('workoutId').equals(workoutId).toArray()
+  ).sort((a, b) => a.order - b.order);
+  const groupById = new Map(groups.map((g) => [g.id, g]));
+  const exercises = (
+    await db.exercises.where('muscleGroupId').anyOf(groups.map((g) => g.id)).toArray()
+  ).sort((a, b) => a.order - b.order);
+  const exById = new Map(exercises.map((e) => [e.id, e]));
 
-  const logs = await db.exerciseLogs.where('sessionId').equals(last.id).toArray();
-  const sets = await db.setLogs.where('sessionId').equals(last.id).toArray();
-  const setsByExerciseId = new Map<string, SetLog[]>();
-  for (const s of sets) {
-    const log = logs.find((l) => l.id === s.exerciseLogId);
-    if (!log) continue;
-    const arr = setsByExerciseId.get(log.exerciseId) ?? [];
-    arr.push(s);
-    setsByExerciseId.set(log.exerciseId, arr);
+  const refreshed = drafts.map((d) => {
+    const ex = exById.get(d.exerciseId);
+    if (!ex) return d;
+    const group = groupById.get(ex.muscleGroupId);
+    // Grow the visible rows to a raised target; never shrink, that would drop
+    // sets the user has already logged.
+    const sets =
+      d.sets.length >= ex.targetSets
+        ? d.sets
+        : [
+            ...d.sets,
+            ...Array.from({ length: ex.targetSets - d.sets.length }, (_, i) => ({
+              setNumber: d.sets.length + i + 1,
+              weight: '' as number | '',
+              reps: '' as number | '',
+              completed: false,
+              ...(d.prescription && d.prescription.weight > 0
+                ? { ghostWeight: d.prescription.weight, ghostReps: d.prescription.reps }
+                : {}),
+            })),
+          ];
+    return {
+      ...d,
+      exerciseName: ex.name,
+      muscleGroupId: ex.muscleGroupId,
+      muscleGroupName: group?.name ?? d.muscleGroupName,
+      targetSets: ex.targetSets,
+      targetRepsMin: ex.targetRepsMin,
+      targetRepsMax: ex.targetRepsMax,
+      barWeight: ex.barWeight,
+      isMachine: !!ex.isMachine,
+      defaultRestSec: ex.defaultRestSec,
+      ...(ex.notes ? { notes: ex.notes } : {}),
+      ...(ex.incrementKg !== undefined ? { incrementKg: ex.incrementKg } : {}),
+      sets,
+    };
+  });
+
+  const present = new Set(drafts.map((d) => d.exerciseId));
+  const appended: DraftExercise[] = [];
+  for (const ex of exercises) {
+    if (present.has(ex.id)) continue;
+    const group = groupById.get(ex.muscleGroupId);
+    if (!group) continue;
+    appended.push(await buildDraftForExercise(ex, group));
   }
 
-  return drafts.map((d) => {
-    const prev = setsByExerciseId.get(d.exerciseId);
-    if (!prev || prev.length === 0) return d;
-    const sorted = [...prev].sort((a, b) => a.setNumber - b.setNumber);
-    const newSets = sorted.map((s, i) => ({
-      setNumber: i + 1,
-      weight: s.weight as number | '',
-      reps: s.reps as number | '',
-      completed: false,
-      ghostWeight: s.weight,
-      ghostReps: s.reps,
-    }));
-    return { ...d, sets: newSets };
+  return [
+    ...refreshed,
+    ...appended.map((d, i) => ({ ...d, order: refreshed.length + i })),
+  ];
+}
+
+/**
+ * Commit an autosaved draft straight to history, without opening the logger.
+ * This is the one-tap rescue for "I did the workout and forgot to press Save":
+ * the draft already snapshots the workout name/code/plan, so it commits even if
+ * the workout was since removed from the plan.
+ */
+export async function commitDraft(draft: WorkoutDraft): Promise<SaveResult> {
+  const workout: Workout =
+    (await db.workouts.get(draft.workoutId)) ?? {
+      id: draft.workoutId,
+      planId: draft.planId,
+      name: draft.workoutName,
+      code: draft.workoutCode,
+      order: 0,
+      defaultRestSec: 150,
+      createdAt: draft.startedAt,
+      updatedAt: draft.startedAt,
+    };
+  const res = await saveSession({
+    workout,
+    drafts: draft.drafts,
+    date: draft.sessionDate,
+    startedAt: draft.startedAt,
+    ...(draft.notes.trim() ? { notes: draft.notes.trim() } : {}),
   });
+  await db.workoutDrafts.delete(draft.workoutId);
+  return res;
 }
 
 export interface SaveResult {
@@ -173,6 +275,31 @@ export async function saveSession(args: {
 
   drafts.forEach((d, idx) => {
     const exerciseLogId = newId();
+
+    // Sets the user never touched are dropped rather than stored as 0 kg × 0.
+    // Those phantom rows came back as ghost values in the next session and
+    // polluted the set count the progression engine reads.
+    const persisted: SetLog[] = d.sets
+      .filter((s) => s.completed || s.weight !== '' || s.reps !== '')
+      .map((s) => ({
+        id: newId(),
+        exerciseLogId,
+        sessionId,
+        exerciseId: d.exerciseId,
+        setNumber: s.setNumber,
+        weight: s.weight === '' ? 0 : Number(s.weight),
+        reps: s.reps === '' ? 0 : Number(s.reps),
+        completed: s.completed,
+        ...(s.rpe !== '' && s.rpe !== undefined ? { rpe: Number(s.rpe) } : {}),
+      }));
+
+    // An exercise the user skipped entirely gets NO log row. Writing an empty
+    // one gave it a 0 kg "session" in its history: three skipped workouts and
+    // the app declared a lift he never performed to be stalled, and prescribed
+    // a deload for it. Its planned sets still count against completion.
+    totalPlannedSets += d.targetSets;
+    if (persisted.length === 0) return;
+
     exerciseLogs.push({
       id: exerciseLogId,
       sessionId,
@@ -187,19 +314,6 @@ export async function saveSession(args: {
       isMachine: d.isMachine,
       ...(d.notes ? { notes: d.notes } : {}),
     });
-    totalPlannedSets += d.targetSets;
-
-    const persisted: SetLog[] = d.sets.map((s) => ({
-      id: newId(),
-      exerciseLogId,
-      sessionId,
-      exerciseId: d.exerciseId,
-      setNumber: s.setNumber,
-      weight: s.weight === '' ? 0 : Number(s.weight),
-      reps: s.reps === '' ? 0 : Number(s.reps),
-      completed: s.completed,
-      ...(s.rpe !== '' && s.rpe !== undefined ? { rpe: Number(s.rpe) } : {}),
-    }));
     setLogs.push(...persisted);
 
     const completedSets = persisted.filter((p) => p.completed);
@@ -242,6 +356,7 @@ export async function saveSession(args: {
     totalVolume: totalVol,
     prCount,
     completionPct: score.completionPct,
+    plannedSets: totalPlannedSets,
   };
 
   await db.transaction('rw', [db.sessions, db.exerciseLogs, db.setLogs], async () => {

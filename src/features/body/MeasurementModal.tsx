@@ -36,9 +36,29 @@ export function MeasurementModal({ open, onClose, editing }: Props) {
     setNotes(editing?.notes ?? '');
   }, [open, editing]);
 
+  /**
+   * Range checks live here, not as `min`/`max` on the inputs. NumberInput
+   * clamps to those on blur — and pressing שמור blurs first — so a typed 0
+   * arrived here already rewritten to 20 and got saved as a real measurement,
+   * silently, with a success toast. A body measurement is a fact about the
+   * user; refusing a wrong one is the only honest answer, and the same applies
+   * at the top of the range (a typo'd 500 became a stored 300).
+   */
   const save = async () => {
-    if (bodyWeight === '' || Number(bodyWeight) <= 0) {
-      toast.warn('הזן משקל גוף תקין');
+    const num = (v: number | '') => (v === '' ? undefined : Number(v));
+    const weight = num(bodyWeight);
+    if (weight === undefined || weight < 20 || weight > 300) {
+      toast.warn('משקל גוף חייב להיות בין 20 ל-300 ק״ג');
+      return;
+    }
+    const fat = num(fatPct);
+    if (fat !== undefined && (fat < 3 || fat > 60)) {
+      toast.warn('אחוז שומן חייב להיות בין 3 ל-60');
+      return;
+    }
+    const muscle = num(muscleMass);
+    if (muscle !== undefined && (muscle < 10 || muscle > 150)) {
+      toast.warn('מסת שריר חייבת להיות בין 10 ל-150 ק״ג');
       return;
     }
     const t = now();
@@ -73,69 +93,80 @@ export function MeasurementModal({ open, onClose, editing }: Props) {
         </>
       }
     >
-      <div className="space-y-3">
-        <div>
-          <label className="label">תאריך</label>
-          <input
-            type="date"
-            className="input"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            max={format(new Date(), 'yyyy-MM-dd')}
-          />
-        </div>
-        <div>
-          <label className="label">משקל גוף (kg) *</label>
-          <NumberInput
-            value={bodyWeight}
-            onChange={setBodyWeight}
-            min={20}
-            max={300}
-            decimals={1}
-            step={0.1}
-            withSteppers
-            placeholder="—"
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
+      <div className="space-y-5">
+        {/* Weight is the measurement; everything else is optional colour. It
+            gets the size, and the date rides alongside it rather than above. */}
+        <div className="space-y-3">
           <div>
-            <label className="label">% שומן</label>
-            <NumberInput
-              value={fatPct}
-              onChange={setFatPct}
-              min={3}
-              max={60}
-              decimals={1}
-              step={0.1}
-              placeholder="—"
+            <label className="label" htmlFor="bm-date">תאריך</label>
+            <input
+              id="bm-date"
+              type="date"
+              className="input num"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              max={format(new Date(), 'yyyy-MM-dd')}
             />
           </div>
           <div>
-            <label className="label">מסת שריר (kg)</label>
+            <label className="label">משקל גוף (kg) *</label>
             <NumberInput
-              value={muscleMass}
-              onChange={setMuscleMass}
-              min={10}
-              max={150}
+              ariaLabel="משקל גוף (kg)"
+              value={bodyWeight}
+              onChange={setBodyWeight}
               decimals={1}
               step={0.1}
+              withSteppers
               placeholder="—"
+              suffix="kg"
+              inputClassName="!text-2xl font-semibold tracking-tight !py-3"
             />
           </div>
         </div>
+
         <div>
-          <label className="label">הערות</label>
+          <p className="eyebrow mb-2">נתוני InBody · אופציונלי</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">% שומן</label>
+              <NumberInput
+                ariaLabel="אחוז שומן"
+                value={fatPct}
+                onChange={setFatPct}
+                decimals={1}
+                step={0.1}
+                placeholder="—"
+                suffix="%"
+              />
+            </div>
+            <div>
+              <label className="label">מסת שריר (kg)</label>
+              <NumberInput
+                ariaLabel="מסת שריר (kg)"
+                value={muscleMass}
+                onChange={setMuscleMass}
+                decimals={1}
+                step={0.1}
+                placeholder="—"
+                suffix="kg"
+              />
+            </div>
+          </div>
+          <p className="text-2xs text-fg-dim mt-2">
+            ימים שאין לך את אלה — רק משקל מספיק.
+          </p>
+        </div>
+
+        <div>
+          <label className="label" htmlFor="bm-notes">הערות</label>
           <textarea
-            className="input min-h-16 text-sm"
+            id="bm-notes"
+            className="input min-h-16 text-sm leading-relaxed"
             placeholder="איך הרגשת? צום/לא צום? אחרי אימון?"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />
         </div>
-        <p className="text-2xs text-fg-muted text-center">
-          % שומן ומסת שריר אופציונליים — מתאימים לנתוני InBody. ימים שאין לך
-          את אלה — רק משקל מספיק.
-        </p>
       </div>
     </Modal>
   );

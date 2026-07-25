@@ -23,7 +23,9 @@ export function useDaySupplements(date: ISODate = todayISO()): TodayRow[] {
     const rows: TodayRow[] = [];
     for (const s of sups) {
       if (s.daysOfWeek.length > 0 && !s.daysOfWeek.includes(dow)) continue;
-      for (const time of s.times) {
+      // Set(): duplicate times would render two rows with the same key, both
+      // driven by the one matching log. Guards against pre-existing DB rows.
+      for (const time of new Set(s.times)) {
         const log = logs.find((l) => l.supplementId === s.id && l.scheduledTime === time);
         rows.push({ supplement: s, scheduledTime: time, ...(log ? { log } : {}) });
       }

@@ -7,17 +7,26 @@ interface EmptyStateProps {
   action?: ReactNode;
 }
 
+/**
+ * "There is nothing here yet" as a deliberate surface: a real card with the
+ * icon sunk into a recessed well, so it reads as a designed state rather than
+ * as a screen that failed to load.
+ */
 export function EmptyState({ title, description, icon, action }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center text-center py-10 px-6 gap-3">
+    <div className="card-flat flex flex-col items-center gap-3 px-6 py-10 text-center">
       {icon && (
-        <div className="w-12 h-12 rounded-2xl bg-ink-800 border border-line flex items-center justify-center text-fg-muted">
+        <div className="field flex h-14 w-14 items-center justify-center rounded-2xl text-fg-dim [&>svg]:h-6 [&>svg]:w-6">
           {icon}
         </div>
       )}
-      <h3 className="text-base font-semibold">{title}</h3>
-      {description && <p className="text-sm text-fg-muted max-w-xs leading-relaxed">{description}</p>}
-      {action && <div className="mt-2">{action}</div>}
+      <div className="space-y-1.5">
+        <h3 className="text-base font-bold">{title}</h3>
+        {description && (
+          <p className="mx-auto max-w-xs text-sm leading-relaxed text-fg-muted">{description}</p>
+        )}
+      </div>
+      {action && <div className="mt-1">{action}</div>}
     </div>
   );
 }

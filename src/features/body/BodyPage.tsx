@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { motion } from 'framer-motion';
 import {
-  LineChart,
+  ComposedChart,
+  Area,
   Line,
   XAxis,
   YAxis,
@@ -18,7 +20,8 @@ import { IconChart, IconEdit, IconPlus, IconTrash } from '@/components/Icon';
 import { MeasurementModal } from './MeasurementModal';
 import { ProfileModal } from './ProfileModal';
 import { formatHebDate } from '@/utils/dates';
-import { format, parseISO, differenceInDays } from 'date-fns';
+import { format, parseISO, differenceInDays, isToday, isYesterday } from 'date-fns';
+import { he } from 'date-fns/locale';
 import { useSettings } from '@/hooks/useSettings';
 import {
   computeFFMI,
@@ -28,6 +31,26 @@ import {
   BODY_FAT_CATEGORY_LABEL,
 } from '@/utils/benchmarks';
 import type { BodyMeasurement } from '@/types';
+
+const WEIGHT_COLOR = '#ff7a1a';
+const FAT_COLOR = '#6ec1ff';
+
+/** Tooltip series labels. The old inline ternary had a dead 'שריר' branch. */
+const SERIES_LABEL: Record<string, string> = {
+  bodyWeight: 'משקל (kg)',
+  fatPct: '% שומן',
+};
+
+/**
+ * Dense-list date: no weekday, so the row's second line still fits the phone.
+ * Still never a raw ISO string.
+ */
+function shortHebDate(iso: string): string {
+  const d = parseISO(iso);
+  if (isToday(d)) return 'היום';
+  if (isYesterday(d)) return 'אתמול';
+  return format(d, 'd בMMMM', { locale: he });
+}
 
 export function BodyPage() {
   const measurements = useLiveQuery(() => getBodyMeasurementsAsc(), []);
@@ -47,7 +70,8 @@ export function BodyPage() {
   const onDelete = async (m: BodyMeasurement) => {
     const ok = await confirmDialog({
       title: 'למחוק את המדידה?',
-      body: `המדידה מ-${m.date} תימחק. אין שחזור.`,
+      // Never a raw ISO date in front of the user.
+      body: `המדידה מ-${formatHebDate(m.date)} תימחק. אין שחזור.`,
       confirmLabel: 'מחק',
       cancelLabel: 'ביטול',
       destructive: true,
@@ -60,6 +84,10 @@ export function BodyPage() {
   const prev = list[list.length - 2];
   const weightDelta =
     latest && prev ? Number((latest.bodyWeight - prev.bodyWeight).toFixed(1)) : null;
+  const deltaDays =
+    latest && prev ? differenceInDays(parseISO(latest.date), parseISO(prev.date)) : null;
+  const daysAgo = latest ? differenceInDays(new Date(), parseISO(latest.date)) : 0;
+
   const profile = settings.bodyProfile;
   const sex = profile?.sex ?? 'male';
   const ffmi =
@@ -69,16 +97,25 @@ export function BodyPage() {
   const fatCategory =
     latest && latest.fatPct !== undefined ? categorizeBodyFat(latest.fatPct, sex) : null;
   const profileComplete = isProfileComplete(profile);
+  const hasFat = list.some((m) => m.fatPct !== undefined);
+
+  // The two secondary readings on the latest measurement, as a recessed strip
+  // inside the hero. Built as a list so one-of-two renders full width.
+  const subStats: { label: string; value: string; unit: string }[] = [];
+  if (latest?.fatPct !== undefined)
+    subStats.push({ label: 'אחוז שומן', value: String(latest.fatPct), unit: '%' });
+  if (latest?.muscleMass !== undefined)
+    subStats.push({ label: 'מסת שריר', value: String(latest.muscleMass), unit: 'kg' });
 
   return (
     <div className="pt-3">
       <header className="flex items-center justify-between mb-4 px-1">
         <div>
-          <p className="text-2xs uppercase tracking-wider text-fg-muted">גוף</p>
+          <p className="eyebrow">גוף</p>
           <h1 className="text-2xl font-extrabold tracking-tight">מדידות גוף</h1>
         </div>
-        <button className="btn-primary !min-h-9 !px-3 text-xs" onClick={onAdd}>
-          <IconPlus size={14} /> מדידה
+        <button className="btn-primary !min-h-10 !px-3.5 text-xs" onClick={onAdd}>
+          <IconPlus size={15} /> מדידה
         </button>
       </header>
 
@@ -99,41 +136,76 @@ export function BodyPage() {
         <>
           {latest && (
             <Section>
-              <div className="card p-4">
-                <p className="text-2xs text-fg-muted">מדידה אחרונה</p>
-                <div className="flex items-baseline gap-3 mt-1">
-                  <span className="num text-4xl font-extrabold">
-                    {latest.bodyWeight.toFixed(1)}
-                  </span>
-                  <span className="text-sm text-fg-muted">kg</span>
-                  {weightDelta !== null && weightDelta !== 0 && (
-                    <span
-                      className={`num text-xs font-semibold ${
-                        weightDelta < 0 ? 'text-good' : 'text-warn'
-                      }`}
-                    >
-                      {weightDelta > 0 ? '+' : ''}
-                      {weightDelta} kg
-                    </span>
+              {/* The screen's one job: the last weigh-in, as a figure, with the
+                  trend it makes against the previous one. */}
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className="card-hero p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="eyebrow">מדידה אחרונה</p>
+                    <p className="flex items-baseline gap-1.5 mt-1.5">
+                      <span className="num-display text-[2.75rem] leading-none">
+                        {latest.bodyWeight.toFixed(1)}
+                      </span>
+                      <span className="text-sm text-fg-muted">kg</span>
+                    </p>
+                    <p className="text-2xs text-fg-dim mt-2">
+                      {formatHebDate(latest.date)}
+                      {daysAgo > 1 && ` · לפני ${daysAgo} ימים`}
+                    </p>
+                  </div>
+
+                  {weightDelta !== null && (
+                    <div className="field shrink-0 px-3 py-2 text-center min-w-[5.25rem]">
+                      {weightDelta === 0 ? (
+                        <p className="text-xs font-semibold text-fg-muted leading-none py-0.5">
+                          ללא שינוי
+                        </p>
+                      ) : (
+                        <p className="flex items-baseline justify-center gap-1 leading-none">
+                          <span
+                            className={
+                              weightDelta > 0 ? 'text-accent-text text-xs' : 'text-info text-xs'
+                            }
+                            aria-hidden
+                          >
+                            {weightDelta > 0 ? '▲' : '▼'}
+                          </span>
+                          <span className="num-display text-base">
+                            {Math.abs(weightDelta).toFixed(1)}
+                          </span>
+                          <span className="text-2xs text-fg-muted">kg</span>
+                        </p>
+                      )}
+                      <p className="text-2xs text-fg-dim mt-1.5 leading-none">
+                        {deltaDays === null || deltaDays === 0
+                          ? 'מהקודמת'
+                          : `ב-${deltaDays} ימים`}
+                      </p>
+                    </div>
                   )}
                 </div>
-                <div className="flex gap-3 mt-2 text-xs text-fg-muted">
-                  {latest.fatPct !== undefined && (
-                    <span>
-                      שומן · <span className="num text-fg">{latest.fatPct}%</span>
-                    </span>
-                  )}
-                  {latest.muscleMass !== undefined && (
-                    <span>
-                      שריר · <span className="num text-fg">{latest.muscleMass} kg</span>
-                    </span>
-                  )}
-                </div>
-                <p className="text-2xs text-fg-muted mt-1">
-                  {formatHebDate(latest.date)} ·{' '}
-                  {differenceInDays(new Date(), parseISO(latest.date))} ימים
-                </p>
-              </div>
+
+                {subStats.length > 0 && (
+                  <div className="field mt-4 grid divide-x divide-line-muted"
+                    style={{ gridTemplateColumns: `repeat(${subStats.length}, minmax(0, 1fr))` }}
+                  >
+                    {subStats.map((s) => (
+                      <div key={s.label} className="px-3 py-2.5">
+                        <p className="eyebrow">{s.label}</p>
+                        <p className="flex items-baseline gap-1 mt-1">
+                          <span className="num-display text-lg leading-none">{s.value}</span>
+                          <span className="text-2xs text-fg-muted">{s.unit}</span>
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
             </Section>
           )}
 
@@ -149,148 +221,219 @@ export function BodyPage() {
               }
               action={
                 <button
-                  className="btn-ghost !min-h-9 !px-2 text-xs"
+                  className="btn-ghost !min-h-9 !px-3 text-xs shrink-0"
                   onClick={() => setProfileOpen(true)}
                 >
                   {profileComplete ? 'ערוך פרופיל' : 'הגדר פרופיל'}
                 </button>
               }
             >
-              <div className="grid grid-cols-2 gap-2">
-                {fatCategory && (
-                  <div className="card-flat p-3">
-                    <p className="text-2xs text-fg-muted">קטגוריית שומן</p>
-                    <p className="text-base font-bold">{BODY_FAT_CATEGORY_LABEL[fatCategory]}</p>
-                    <p className="text-2xs text-fg-muted num">{latest.fatPct}%</p>
-                  </div>
-                )}
-                {ffmi ? (
-                  <div className="card-flat p-3">
-                    <p className="text-2xs text-fg-muted">FFMI</p>
-                    <p className="text-base font-bold">
-                      <span className="num">{ffmi.normalized}</span>
-                    </p>
-                    <p className="text-2xs text-fg-muted">{FFMI_CATEGORY_LABEL[ffmi.category]}</p>
-                  </div>
-                ) : !profileComplete ? (
-                  <div className="card-flat p-3 border-dashed text-2xs text-fg-muted">
-                    FFMI דורש גובה + % שומן
-                  </div>
-                ) : latest.fatPct === undefined ? (
-                  <div className="card-flat p-3 border-dashed text-2xs text-fg-muted">
-                    FFMI דורש % שומן במדידה
-                  </div>
-                ) : null}
-              </div>
-              <p className="text-2xs text-fg-muted text-center mt-2">
+              {fatCategory || ffmi ? (
+                <div className="grid grid-cols-2 gap-2">
+                  {fatCategory && latest.fatPct !== undefined && (
+                    <div className="card-flat p-3">
+                      <p className="eyebrow truncate">קטגוריית שומן</p>
+                      <p className="flex items-baseline gap-1 mt-2">
+                        <span className="num-display text-2xl leading-none">{latest.fatPct}</span>
+                        <span className="text-2xs text-fg-muted">%</span>
+                      </p>
+                      <p className="text-2xs text-fg-dim mt-1 truncate">
+                        {BODY_FAT_CATEGORY_LABEL[fatCategory]}
+                      </p>
+                    </div>
+                  )}
+                  {ffmi && (
+                    <div className="card-flat p-3">
+                      <p className="eyebrow truncate">FFMI</p>
+                      <p className="num-display text-2xl leading-none mt-2">{ffmi.normalized}</p>
+                      <p className="text-2xs text-fg-dim mt-1 truncate">
+                        {FFMI_CATEGORY_LABEL[ffmi.category]}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="card-flat p-3 text-2xs text-fg-muted">
+                  {!profileComplete
+                    ? 'FFMI וקטגוריית שומן דורשים גובה ומין בפרופיל, ואחוז שומן במדידה.'
+                    : 'הוסף אחוז שומן במדידה כדי לקבל FFMI וקטגוריית שומן.'}
+                </p>
+              )}
+              <p className="text-2xs text-fg-dim mt-2 px-1">
                 סטנדרטי כוח לתרגילים גדולים מוצגים בדף ההיסטוריה של כל תרגיל.
               </p>
             </Section>
           )}
 
           {list.length >= 2 && (
-            <Section title="מגמה">
-              <div className="card p-3">
+            <Section
+              title="מגמה"
+              action={
+                <div className="seg !flex px-2 py-1 gap-3 text-2xs text-fg-muted shrink-0">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-accent" aria-hidden /> משקל
+                  </span>
+                  {hasFat && (
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-info" aria-hidden /> שומן %
+                    </span>
+                  )}
+                </div>
+              }
+            >
+              <div className="card p-2 pt-3">
                 <div className="h-48">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={list} margin={{ top: 6, right: 10, left: -16, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" />
+                    <ComposedChart data={list} margin={{ top: 4, right: 0, left: -10, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="bodyWeightFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={WEIGHT_COLOR} stopOpacity={0.3} />
+                          <stop offset="100%" stopColor={WEIGHT_COLOR} stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="2 4" vertical={false} />
                       <XAxis
                         dataKey="date"
                         tickFormatter={(d: string) => format(parseISO(d), 'dd/MM')}
-                        tick={{ fontSize: 11 }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickMargin={8}
+                        minTickGap={24}
                       />
-                      <YAxis tick={{ fontSize: 11 }} domain={['dataMin - 1', 'dataMax + 1']} />
+                      {/* Weight (~80) and fat% (~15) need separate axes, or the
+                          shared domain flattens the weight trend to a line. */}
+                      <YAxis
+                        yAxisId="w"
+                        axisLine={false}
+                        tickLine={false}
+                        width={46}
+                        domain={['dataMin - 1', 'dataMax + 1']}
+                      />
+                      {hasFat && (
+                        <YAxis
+                          yAxisId="f"
+                          orientation="right"
+                          axisLine={false}
+                          tickLine={false}
+                          width={34}
+                          domain={['dataMin - 1', 'dataMax + 1']}
+                        />
+                      )}
                       <Tooltip
+                        cursor={{ stroke: '#2c323a', strokeWidth: 1 }}
                         contentStyle={{
                           background: '#0b0d10',
                           border: '1px solid #262b33',
-                          borderRadius: 8,
+                          borderRadius: 12,
                           fontSize: 12,
+                          boxShadow: '0 16px 40px -20px #000000e6',
                         }}
+                        labelStyle={{ color: '#6a727d', fontSize: 11, marginBottom: 2 }}
                         labelFormatter={(d: string) => format(parseISO(d), 'dd/MM/yyyy')}
-                        formatter={(value: number, name: string) => {
-                          const label =
-                            name === 'bodyWeight'
-                              ? 'משקל (kg)'
-                              : name === 'fatPct'
-                                ? '% שומן'
-                                : 'שריר (kg)';
-                          return [value, label];
-                        }}
+                        formatter={(value: number, name: string) => [
+                          value,
+                          SERIES_LABEL[name] ?? name,
+                        ]}
                       />
-                      <Line
+                      <Area
+                        yAxisId="w"
                         type="monotone"
                         dataKey="bodyWeight"
-                        stroke="#ff7a1a"
+                        stroke={WEIGHT_COLOR}
                         strokeWidth={2}
-                        dot={{ r: 3 }}
+                        fill="url(#bodyWeightFill)"
+                        dot={{ r: 2.5, fill: WEIGHT_COLOR, strokeWidth: 0 }}
+                        activeDot={{ r: 4 }}
+                        // The sweep-in costs 1.5s of blank chart on every visit,
+                        // and re-runs whenever the live query re-emits.
+                        isAnimationActive={false}
                       />
-                      {list.some((m) => m.fatPct !== undefined) && (
+                      {hasFat && (
                         <Line
+                          yAxisId="f"
                           type="monotone"
                           dataKey="fatPct"
-                          stroke="#6ec1ff"
+                          stroke={FAT_COLOR}
                           strokeWidth={2}
-                          dot={{ r: 3 }}
+                          strokeDasharray="4 3"
+                          dot={{ r: 2.5, fill: FAT_COLOR, strokeWidth: 0 }}
+                          activeDot={{ r: 4 }}
+                          connectNulls
+                          isAnimationActive={false}
                         />
                       )}
-                    </LineChart>
+                    </ComposedChart>
                   </ResponsiveContainer>
-                </div>
-                <div className="flex justify-center gap-4 mt-2 text-2xs">
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-accent" /> משקל
-                  </span>
-                  {list.some((m) => m.fatPct !== undefined) && (
-                    <span className="flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-info" /> שומן %
-                    </span>
-                  )}
                 </div>
               </div>
             </Section>
           )}
 
           <Section title="היסטוריה" description={`${list.length} מדידות`}>
-            <ul className="card divide-y divide-line overflow-hidden">
-              {[...list].reverse().map((m) => (
-                <li key={m.id} className="p-3 flex items-center gap-3">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm">
-                      <span className="num">{m.bodyWeight.toFixed(1)} kg</span>
-                      {m.fatPct !== undefined && (
-                        <span className="text-fg-muted text-xs ms-2">
-                          · <span className="num">{m.fatPct}%</span> שומן
+            <ul className="card divide-y divide-line-muted overflow-hidden">
+              {[...list].reverse().map((m, i, rows) => {
+                const before = rows[i + 1];
+                const d = before
+                  ? Number((m.bodyWeight - before.bodyWeight).toFixed(1))
+                  : null;
+                return (
+                  <li key={m.id} className="ps-3 pe-1 py-1.5 flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-2">
+                        <span className="num-display text-base shrink-0">
+                          {m.bodyWeight.toFixed(1)} kg
                         </span>
-                      )}
-                      {m.muscleMass !== undefined && (
-                        <span className="text-fg-muted text-xs ms-2">
-                          · <span className="num">{m.muscleMass} kg</span> שריר
+                        {d !== null && d !== 0 && (
+                          <span
+                            className={`text-2xs font-semibold shrink-0 ${
+                              d > 0 ? 'text-accent-text' : 'text-info'
+                            }`}
+                          >
+                            <span aria-hidden>{d > 0 ? '▲' : '▼'}</span>{' '}
+                            <span className="num">{Math.abs(d).toFixed(1)}</span>
+                          </span>
+                        )}
+                        <span className="text-2xs text-fg-dim ms-auto truncate">
+                          {shortHebDate(m.date)}
                         </span>
+                      </div>
+                      {(m.fatPct !== undefined || m.muscleMass !== undefined) && (
+                        <p className="text-2xs text-fg-dim truncate">
+                          {m.fatPct !== undefined && (
+                            <>
+                              <span className="num">{m.fatPct}%</span> שומן
+                            </>
+                          )}
+                          {m.fatPct !== undefined && m.muscleMass !== undefined && ' · '}
+                          {m.muscleMass !== undefined && (
+                            <>
+                              <span className="num">{m.muscleMass} kg</span> שריר
+                            </>
+                          )}
+                        </p>
                       )}
-                    </p>
-                    <p className="text-2xs text-fg-muted">{formatHebDate(m.date)}</p>
-                    {m.notes && (
-                      <p className="text-2xs text-fg-muted mt-0.5 truncate">{m.notes}</p>
-                    )}
-                  </div>
-                  <button
-                    className="btn-icon !min-w-8 !min-h-8 text-fg-muted"
-                    aria-label="ערוך"
-                    onClick={() => onEdit(m)}
-                  >
-                    <IconEdit size={14} />
-                  </button>
-                  <button
-                    className="btn-icon !min-w-8 !min-h-8 text-bad/80"
-                    aria-label="מחק"
-                    onClick={() => onDelete(m)}
-                  >
-                    <IconTrash size={14} />
-                  </button>
-                </li>
-              ))}
+                      {m.notes && (
+                        <p className="text-2xs text-fg-ghost mt-0.5 truncate">{m.notes}</p>
+                      )}
+                    </div>
+                    <button
+                      className="btn-icon !min-w-11 !min-h-11 text-fg-dim"
+                      aria-label="ערוך"
+                      onClick={() => onEdit(m)}
+                    >
+                      <IconEdit size={16} />
+                    </button>
+                    {/* Destructive, but not shouting red while you read the list. */}
+                    <button
+                      className="btn-icon !min-w-11 !min-h-11 text-fg-ghost hover:text-bad"
+                      aria-label="מחק"
+                      onClick={() => onDelete(m)}
+                    >
+                      <IconTrash size={16} />
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </Section>
         </>

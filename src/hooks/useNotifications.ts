@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useSyncExternalStore } from 'react';
 
 /**
  * Web Notifications wrapper.
@@ -49,12 +49,23 @@ export function getNotifPermission(): NotifPermission {
   return Notification.permission as NotifPermission;
 }
 
+const permListeners = new Set<() => void>();
+
+/** Re-read `Notification.permission` in every mounted `useNotificationPermission`. */
+export function notifyPermissionChanged(): void {
+  for (const f of permListeners) f();
+}
+
 export function useNotificationPermission(): NotifPermission {
-  const [p, setP] = useState<NotifPermission>(getNotifPermission());
-  useEffect(() => {
-    setP(getNotifPermission());
-  }, []);
-  return p;
+  return useSyncExternalStore((cb) => {
+    permListeners.add(cb);
+    // Covers grants made outside the page (iOS Settings, browser site settings).
+    document.addEventListener('visibilitychange', cb);
+    return () => {
+      permListeners.delete(cb);
+      document.removeEventListener('visibilitychange', cb);
+    };
+  }, getNotifPermission);
 }
 
 export function usePlatformInfo(): PlatformInfo {
@@ -77,6 +88,7 @@ export function useRequestNotificationPermission() {
     if (Notification.permission === 'granted') return 'granted';
     try {
       const res = await Notification.requestPermission();
+      notifyPermissionChanged();
       return res as NotifPermission;
     } catch {
       return 'denied';

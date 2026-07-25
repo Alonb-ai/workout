@@ -1,6 +1,7 @@
 import { db } from './db';
 import type {
   ID,
+  ISODate,
   ExerciseSessionStats,
   SetLog,
   Session,
@@ -72,51 +73,49 @@ export async function getExerciseStatsHistory(
   );
 }
 
-/** Get the most-recent completed session of a workout (used to pre-fill). */
-export async function getLastSessionForWorkout(
-  workoutId: ID,
-): Promise<{ session: Session; logs: ExerciseLog[]; sets: SetLog[] } | null> {
-  const sessions = await db.sessions
-    .where('workoutId')
-    .equals(workoutId)
-    .toArray();
-  const completed = sessions
-    .filter((s) => s.status === 'completed')
-    .sort((a, b) => {
-      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
-      return (b.startedAt ?? 0) - (a.startedAt ?? 0);
-    });
-  const last = completed[0];
-  if (!last) return null;
-  const logs = await db.exerciseLogs.where('sessionId').equals(last.id).toArray();
-  const sets = await db.setLogs.where('sessionId').equals(last.id).toArray();
-  return { session: last, logs, sets };
-}
 
 /** Fetch the autosaved draft for a workout (if any). */
 export async function getWorkoutDraft(workoutId: ID): Promise<WorkoutDraft | undefined> {
   return db.workoutDrafts.get(workoutId);
 }
 
-/** All in-progress workout drafts, newest first. Used by the dashboard hint. */
-export async function getAllWorkoutDrafts(): Promise<WorkoutDraft[]> {
-  const all = await db.workoutDrafts.toArray();
-  return all.sort((a, b) => b.updatedAt - a.updatedAt);
+/** Did the user actually log anything in this draft? */
+export function draftHasWork(d: WorkoutDraft): boolean {
+  if (d.notes.trim().length > 0) return true;
+  return d.drafts.some((ex) => ex.sets.some((s) => s.completed));
 }
 
 /**
- * Delete any workoutDrafts not touched in the last `maxAgeHours`. Run on
- * app startup to clear orphans left over from older versions that didn't
- * clean up after Finish & Save, and to wipe abandoned drafts that the user
- * never came back to. Real users finish a session in under 2 hours; 24h is
- * a safe abandonment threshold. Returns count of rows deleted.
+ * Delete abandoned drafts that contain NO logged work — a tab that was opened
+ * on the workout screen and never used, or an orphan left by an older version
+ * of the autosave logic.
+ *
+ * Drafts that DO contain completed sets are never auto-deleted, at any age.
+ * The whole point of the autosave is that forgetting to press "Finish & Save"
+ * cannot cost the user a session; a purge that outran him was exactly that
+ * data loss with extra steps. Forgotten-but-real sessions are surfaced by
+ * `getUnfinishedDrafts` instead, so he can commit them with one tap.
+ *
+ * Returns count of rows deleted.
  */
-export async function purgeStaleWorkoutDrafts(maxAgeHours = 24): Promise<number> {
+export async function purgeEmptyWorkoutDrafts(maxAgeHours = 24): Promise<number> {
   const cutoff = Date.now() - maxAgeHours * 3600 * 1000;
   const stale = await db.workoutDrafts.where('updatedAt').below(cutoff).toArray();
-  if (stale.length === 0) return 0;
-  await db.workoutDrafts.bulkDelete(stale.map((d) => d.workoutId));
-  return stale.length;
+  const empty = stale.filter((d) => !draftHasWork(d));
+  if (empty.length === 0) return 0;
+  await db.workoutDrafts.bulkDelete(empty.map((d) => d.workoutId));
+  return empty.length;
+}
+
+/**
+ * Drafts holding real work whose session date is already in the past — i.e.
+ * workouts the user logged and then forgot to save. Newest first.
+ */
+export async function getUnfinishedDrafts(today: ISODate): Promise<WorkoutDraft[]> {
+  const all = await db.workoutDrafts.toArray();
+  return all
+    .filter((d) => d.sessionDate < today && draftHasWork(d))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 /** All body measurements, oldest → newest (suits chart consumption). */

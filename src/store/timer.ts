@@ -11,22 +11,18 @@ interface TimerState {
   endsAt: number | null;
   totalSec: number; // configured duration
   label: string;
-  running: boolean;
   start: (sec: number, label?: string) => void;
   add: (deltaSec: number) => void;
   stop: () => void;
-  /** snapshot remaining seconds (call from a tick loop / setInterval). */
-  remaining: () => number;
 }
 
 export const useTimerStore = create<TimerState>((set, get) => ({
   endsAt: null,
   totalSec: 0,
   label: '',
-  running: false,
   start: (sec: number, label = '') => {
     const endsAt = Date.now() + sec * 1000;
-    set({ endsAt, totalSec: sec, label, running: true });
+    set({ endsAt, totalSec: sec, label });
   },
   add: (deltaSec: number) => {
     const cur = get().endsAt;
@@ -34,10 +30,5 @@ export const useTimerStore = create<TimerState>((set, get) => ({
     const nextEndsAt = Math.max(Date.now(), cur + deltaSec * 1000);
     set({ endsAt: nextEndsAt, totalSec: get().totalSec + deltaSec });
   },
-  stop: () => set({ endsAt: null, running: false, label: '' }),
-  remaining: () => {
-    const e = get().endsAt;
-    if (!e) return 0;
-    return Math.max(0, Math.ceil((e - Date.now()) / 1000));
-  },
+  stop: () => set({ endsAt: null, label: '' }),
 }));

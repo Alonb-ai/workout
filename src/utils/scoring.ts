@@ -1,6 +1,5 @@
 import type {
   SetLog,
-  ExerciseLog,
   Session,
   ExerciseSessionStats,
   ComparisonTag,
@@ -14,7 +13,7 @@ export function epley1RM(weight: number, reps: number): number {
 }
 
 /** Best estimated 1RM across completed sets. */
-export function bestEst1RM(sets: SetLog[]): number {
+function bestEst1RM(sets: SetLog[]): number {
   return sets.reduce(
     (max, s) => (s.completed ? Math.max(max, epley1RM(s.weight, s.reps)) : max),
     0,
@@ -74,18 +73,24 @@ export function compareToPrevious(
   const bestEverTop = Math.max(...allPrevious.map((s) => s.topWeight), 0);
   const bestEver1RM = Math.max(...allPrevious.map((s) => s.est1RM), 0);
   const bestEverVol = Math.max(...allPrevious.map((s) => s.volume), 0);
+  const bestEverReps = Math.max(...allPrevious.map((s) => s.topReps), 0);
 
-  const isPR =
-    current.topWeight > bestEverTop ||
-    current.est1RM > bestEver1RM ||
-    current.volume > bestEverVol;
+  // Bodyweight work (0 kg): weight, 1RM and volume are pinned at 0 forever,
+  // so reps are the progress signal (same rule as progression.ts).
+  const bodyweight = current.topWeight === 0 && bestEverTop === 0;
 
-  const deltaVolumePct = previous.volume === 0
-    ? 0
-    : ((current.volume - previous.volume) / previous.volume) * 100;
-  const deltaTopPct = previous.topWeight === 0
-    ? 0
-    : ((current.topWeight - previous.topWeight) / previous.topWeight) * 100;
+  const isPR = bodyweight
+    ? current.topReps > bestEverReps
+    : current.topWeight > bestEverTop ||
+      current.est1RM > bestEver1RM ||
+      current.volume > bestEverVol;
+
+  const pct = (now: number, before: number) =>
+    before === 0 ? 0 : ((now - before) / before) * 100;
+  const deltaVolumePct = bodyweight
+    ? pct(current.topReps, previous.topReps)
+    : pct(current.volume, previous.volume);
+  const deltaTopPct = bodyweight ? 0 : pct(current.topWeight, previous.topWeight);
 
   if (isPR) {
     return {
@@ -173,29 +178,6 @@ export function computeWorkoutScore(args: {
     completionPct: completionComponent,
     message,
   };
-}
-
-/** Count PRs across all exercises in a session. */
-export function countPRs(tags: ComparisonTag[]): number {
-  return tags.filter((t) => t.kind === 'pr').length;
-}
-
-export interface ExerciseInSession {
-  exerciseLog: ExerciseLog;
-  sets: SetLog[];
-}
-
-/** Sum volume across exercises in a session. */
-export function sessionTotalVolume(exs: ExerciseInSession[]): number {
-  return exs.reduce((sum, ex) => sum + totalVolume(ex.sets), 0);
-}
-
-export function sessionPlannedSets(exs: ExerciseInSession[]): number {
-  return exs.reduce((s, ex) => s + ex.exerciseLog.targetSets, 0);
-}
-
-export function sessionCompletedSets(exs: ExerciseInSession[]): number {
-  return exs.reduce((s, ex) => s + ex.sets.filter((x) => x.completed).length, 0);
 }
 
 /** Sort sessions newest first. */

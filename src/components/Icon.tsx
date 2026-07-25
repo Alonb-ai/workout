@@ -214,6 +214,14 @@ export const IconRefresh = (p: IconProps) => (
   </Base>
 );
 
+export const IconTarget = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="12" cy="12" r="8" />
+    <circle cx="12" cy="12" r="3.5" />
+    <circle cx="12" cy="12" r="0.5" />
+  </Base>
+);
+
 export const IconWarn = (p: IconProps) => (
   <Base {...p}>
     <path d="M12 3l10 18H2L12 3z" />

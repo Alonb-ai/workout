@@ -17,7 +17,9 @@ import { Modal } from '@/components/Modal';
 import { NumberInput } from '@/components/NumberInput';
 import { toast } from '@/store/toast';
 import { confirmDialog } from '@/components/Confirm';
+import { cn } from '@/utils/cn';
 import type { Plan, Workout, MuscleGroup, Exercise } from '@/types';
+import { draftHasWork } from '@/db/queries';
 import {
   DndContext,
   PointerSensor,
@@ -34,11 +36,48 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
+/** Next `order` for a sibling list — max+1, so deletes can't create collisions. */
+function nextOrder(items: { order: number }[]): number {
+  return 1 + Math.max(-1, ...items.map((i) => i.order));
+}
+
+/** Rest time as m:ss — 150s is "2:30", not "3 דק׳". */
+function formatRest(sec: number): string {
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+}
+
+/** How many logged-but-unsaved sets sit in these workouts' autosaved drafts. */
+async function unsavedSetsFor(workoutIds: string[]): Promise<number> {
+  const drafts = await db.workoutDrafts.bulkGet(workoutIds);
+  return drafts
+    .filter((d): d is NonNullable<typeof d> => !!d && draftHasWork(d))
+    .reduce(
+      (n, d) => n + d.drafts.reduce((m, ex) => m + ex.sets.filter((s) => s.completed).length, 0),
+      0,
+    );
+}
+
+/**
+ * Drop the autosaved drafts of deleted workouts — but only the EMPTY ones.
+ * A draft holding logged sets is never deleted by a cascade: it snapshots its
+ * own workout name/code/plan, so the dashboard can still surface it and
+ * `commitDraft` can still file it into history after the workout is gone.
+ * Deleting a workout must not be a way to silently lose a session.
+ */
+async function deleteEmptyDrafts(workoutIds: string[]): Promise<void> {
+  const drafts = await db.workoutDrafts.bulkGet(workoutIds);
+  const empty = drafts
+    .filter((d): d is NonNullable<typeof d> => !!d && !draftHasWork(d))
+    .map((d) => d.workoutId);
+  if (empty.length > 0) await db.workoutDrafts.bulkDelete(empty);
+}
+
 export function PlanPage() {
   const plans = useLiveQuery(() => db.plans.orderBy('order').toArray(), []) ?? [];
-  const activePlan = plans.find((p) => p.isActive) ?? plans[0] ?? null;
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
-  const planId = selectedPlanId ?? activePlan?.id ?? null;
+  const planId = selectedPlanId ?? plans.find((p) => p.isActive)?.id ?? plans[0]?.id ?? null;
+  // Single source of truth: the plan the user is looking at. Never mix with "the active plan".
+  const plan = plans.find((p) => p.id === planId) ?? null;
 
   const [editPlanOpen, setEditPlanOpen] = useState(false);
   const [editPlanDraft, setEditPlanDraft] = useState<Plan | null>(null);
@@ -56,8 +95,10 @@ export function PlanPage() {
     const p: Plan = {
       id: newId(),
       name: 'תכנית חדשה',
-      isActive: plans.length === 0,
-      order: plans.length,
+      // Adopt it whenever nothing is active — not only when the DB is empty,
+      // or deleting the active plan leaves the app with no active plan at all.
+      isActive: !plans.some((x) => x.isActive),
+      order: nextOrder(plans),
       createdAt: t,
       updatedAt: t,
     };
@@ -78,7 +119,7 @@ export function PlanPage() {
           id: newPlanId,
           name: `${p.name} — עותק`,
           isActive: false,
-          order: plans.length,
+          order: nextOrder(plans),
           createdAt: t,
           updatedAt: t,
         });
@@ -108,16 +149,22 @@ export function PlanPage() {
   };
 
   const deletePlan = async (p: Plan) => {
+    const workoutIds = (await db.workouts.where('planId').equals(p.id).toArray()).map((w) => w.id);
+    const unsaved = await unsavedSetsFor(workoutIds);
     const ok = await confirmDialog({
       title: `למחוק את "${p.name}"?`,
-      body: 'הפעולה תמחק את התכנית ואת כל האימונים שלה. אימונים שכבר נשמרו לא יושפעו.',
+      body:
+        'הפעולה תמחק את התכנית ואת כל האימונים שלה. אימונים שכבר נשמרו לא יושפעו.' +
+        (unsaved > 0
+          ? ` יש אימון פתוח עם ${unsaved} סטים שטרם נשמרו — הוא יישאר במסך הבית לשמירה.`
+          : ''),
       destructive: true,
       confirmLabel: 'מחק',
     });
     if (!ok) return;
     await db.transaction(
       'rw',
-      [db.plans, db.workouts, db.muscleGroups, db.exercises],
+      [db.plans, db.workouts, db.muscleGroups, db.exercises, db.workoutDrafts],
       async () => {
         const ws = await db.workouts.where('planId').equals(p.id).toArray();
         for (const w of ws) {
@@ -127,8 +174,15 @@ export function PlanPage() {
           }
           await db.muscleGroups.where('workoutId').equals(w.id).delete();
         }
+        await deleteEmptyDrafts(ws.map((w) => w.id));
         await db.workouts.where('planId').equals(p.id).delete();
         await db.plans.delete(p.id);
+        // Exactly one plan must always be active, or the dashboard and the
+        // logger fall back to different plans.
+        const rest = await db.plans.orderBy('order').toArray();
+        if (rest.length > 0 && !rest.some((x) => x.isActive)) {
+          await db.plans.update(rest[0]!.id, { isActive: true, updatedAt: now() });
+        }
       },
     );
     setSelectedPlanId(null);
@@ -161,24 +215,26 @@ export function PlanPage() {
 
   return (
     <div className="pt-3">
-      <header className="mb-3 flex items-center justify-between">
-        <div>
-          <p className="text-2xs uppercase tracking-wider text-fg-muted">תכנית אימונים</p>
-          <h1 className="text-2xl font-extrabold">{activePlan?.name ?? 'תכנית'}</h1>
+      <header className="mb-3 flex items-start justify-between gap-2 px-1">
+        <div className="min-w-0">
+          <p className="eyebrow">תכנית אימונים</p>
+          <h1 className="text-2xl font-extrabold truncate">{plan?.name ?? 'תכנית'}</h1>
         </div>
-        <button onClick={addPlan} className="btn-ghost !min-h-9 !px-2 text-xs">
+        <button onClick={addPlan} className="btn-ghost !min-h-9 !px-2.5 text-xs shrink-0">
           <IconPlus size={14} /> תכנית
         </button>
       </header>
 
+      {/* The plan switcher is a chip track: one recessed groove with the active
+          pill riding on top, same as the segmented controls elsewhere. */}
       {plans.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto no-scrollbar mb-3 -mx-1 px-1 pb-1">
+        <div className="field mb-3 flex gap-1 overflow-x-auto no-scrollbar rounded-full p-1">
           {plans.map((p) => (
             <button
               key={p.id}
               data-active={p.id === planId}
               onClick={() => setSelectedPlanId(p.id)}
-              className="pill-tab"
+              className="pill-tab shrink-0"
             >
               {p.name}
               {p.isActive && <span className="text-2xs ms-1 opacity-70">· פעילה</span>}
@@ -200,43 +256,54 @@ export function PlanPage() {
         />
       ) : (
         <>
-          {activePlan && (
-            <div className="card p-3 mb-4 flex items-center gap-2">
-              <div className="flex-1">
-                <p className="text-sm font-semibold">{activePlan.name}</p>
-                {activePlan.description && (
-                  <p className="text-2xs text-fg-muted">{activePlan.description}</p>
-                )}
+          {/* The h1 already carries the plan's identity, so this card is its
+              description plus the three plan-level actions — dimmed, because
+              they are not what the user came here to read. */}
+          {plan && (
+            <div className="card mb-4 p-2 ps-3">
+              <div className="flex items-center gap-1">
+                <div className="min-w-0 flex-1 pe-1">
+                  {/* The h1 and the switcher pill both name this plan already —
+                      here the name is only a confirmation, and the description
+                      is the part that carries information. */}
+                  <p className="eyebrow truncate">{plan.name}</p>
+                  {plan.description && (
+                    <p className="mt-1 line-clamp-2 text-xs text-fg-muted">{plan.description}</p>
+                  )}
+                </div>
+                <button
+                  className="btn-icon text-fg-dim hover:text-fg"
+                  aria-label="ערוך תכנית"
+                  onClick={() => {
+                    setEditPlanDraft(plan);
+                    setEditPlanOpen(true);
+                  }}
+                >
+                  <IconEdit size={17} />
+                </button>
+                <button
+                  className="btn-icon text-fg-dim hover:text-fg"
+                  aria-label="שכפל"
+                  onClick={() => duplicatePlan(plan)}
+                >
+                  <IconCopy size={17} />
+                </button>
+                <button
+                  className="btn-icon text-fg-ghost hover:text-bad"
+                  aria-label="מחק תכנית"
+                  onClick={() => deletePlan(plan)}
+                >
+                  <IconTrash size={17} />
+                </button>
               </div>
-              {!activePlan.isActive && (
-                <button className="btn-ghost !min-h-9 !px-2 text-xs" onClick={() => setActive(activePlan)}>
+              {!plan.isActive && (
+                <button
+                  className="btn-ghost mt-2 w-full !min-h-10 text-xs"
+                  onClick={() => setActive(plan)}
+                >
                   הגדר כפעילה
                 </button>
               )}
-              <button
-                className="btn-icon"
-                aria-label="ערוך תכנית"
-                onClick={() => {
-                  setEditPlanDraft(activePlan);
-                  setEditPlanOpen(true);
-                }}
-              >
-                <IconEdit size={18} />
-              </button>
-              <button
-                className="btn-icon"
-                aria-label="שכפל"
-                onClick={() => duplicatePlan(activePlan)}
-              >
-                <IconCopy size={18} />
-              </button>
-              <button
-                className="btn-icon text-bad"
-                aria-label="מחק"
-                onClick={() => deletePlan(activePlan)}
-              >
-                <IconTrash size={18} />
-              </button>
             </div>
           )}
 
@@ -245,15 +312,16 @@ export function PlanPage() {
             action={
               planId && (
                 <button
-                  className="btn-ghost !min-h-9 !px-2 text-xs"
+                  className="btn-ghost !min-h-9 !px-2.5 text-xs"
                   onClick={async () => {
                     const t = now();
+                    const order = nextOrder(workouts);
                     await db.workouts.add({
                       id: newId(),
                       planId,
                       name: 'אימון חדש',
-                      code: `W${workouts.length + 1}`,
-                      order: workouts.length,
+                      code: `W${order + 1}`,
+                      order,
                       defaultRestSec: 150,
                       createdAt: t,
                       updatedAt: t,
@@ -275,7 +343,7 @@ export function PlanPage() {
             ) : (
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragWorkouts}>
                 <SortableContext items={workouts.map((w) => w.id)} strategy={verticalListSortingStrategy}>
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     {workouts.map((w) => (
                       <SortableWorkoutCard key={w.id} workout={w} />
                     ))}
@@ -301,7 +369,7 @@ export function PlanPage() {
               onClick={async () => {
                 if (!editPlanDraft) return;
                 await db.plans.update(editPlanDraft.id, {
-                  name: editPlanDraft.name,
+                  name: editPlanDraft.name.trim() || plan?.name || 'תכנית',
                   ...(editPlanDraft.description ? { description: editPlanDraft.description } : { description: '' }),
                   updatedAt: now(),
                 });
@@ -357,71 +425,95 @@ function SortableWorkoutCard({ workout }: { workout: Workout }) {
   const [draft, setDraft] = useState(workout);
 
   return (
-    <div ref={setNodeRef} style={style} className="card overflow-hidden">
-      <div className="flex items-center gap-2 p-2.5">
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn('card overflow-hidden', expanded && 'shadow-raised')}
+    >
+      {/* The workout's code is set as a display figure in accent, the way the
+          dashboard's next-workout card sets it — same object, same treatment. */}
+      <div className="flex items-center gap-0.5 p-1.5">
         <button
           type="button"
-          className="btn-icon !min-w-9 !min-h-9 text-fg-muted touch-none"
+          className="btn-icon text-fg-ghost hover:text-fg-muted touch-none"
           {...attributes}
           {...listeners}
           aria-label="גרור"
         >
-          <IconGrip size={18} />
+          <IconGrip size={17} />
         </button>
         <button
-          className="flex-1 text-right flex items-center gap-1"
+          className="flex-1 min-w-0 text-right flex items-center gap-1.5 py-1"
           onClick={() => setExpanded((v) => !v)}
         >
           <div className="flex-1 min-w-0">
-            <p className="font-semibold truncate text-sm">
-              <span className="num text-fg-muted me-1.5">{workout.code}</span>
+            {/* Keep the code span + bare name text node exactly as they were:
+                this button's accessible name is asserted with an anchored
+                regex (^<code><name>), and extra element boundaries can change
+                how the name is joined. */}
+            <p className="truncate text-sm font-bold leading-tight">
+              {/* Symmetric margin, not `me-`: the code and a Latin workout name
+                  merge into one bidi run, so a logical-end margin lands on the
+                  far side of the pair and the two render jammed together. */}
+              <span className="num-display text-base font-semibold text-accent-text mx-2">
+                {workout.code}
+              </span>
               {workout.name}
             </p>
-            <p className="text-2xs text-fg-muted">
-              מנוחה ברירת מחדל: {Math.round(workout.defaultRestSec / 60)} דק׳
+            <p className="mt-1 text-2xs text-fg-dim">
+              מנוחה ברירת מחדל: {formatRest(workout.defaultRestSec)} דק׳
             </p>
           </div>
           <IconChevronDown
             size={18}
-            className={`text-fg-muted transition-transform ${expanded ? 'rotate-180' : ''}`}
+            className={cn(
+              'shrink-0 text-fg-dim transition-transform duration-150',
+              expanded && 'rotate-180 text-fg-muted',
+            )}
           />
         </button>
         <button
-          className="btn-icon"
+          className="btn-icon text-fg-dim hover:text-fg"
           aria-label="ערוך"
           onClick={() => {
             setDraft(workout);
             setEditOpen(true);
           }}
         >
-          <IconEdit size={18} />
+          <IconEdit size={17} />
         </button>
         <button
-          className="btn-icon text-bad"
-          aria-label="מחק"
+          className="btn-icon text-fg-ghost hover:text-bad"
+          aria-label="מחק אימון"
           onClick={async () => {
+            const unsaved = await unsavedSetsFor([workout.id]);
             const ok = await confirmDialog({
               title: `למחוק "${workout.name}"?`,
-              body: 'יימחקו גם קבוצות השרירים והתרגילים שמתחת לאימון זה.',
+              body:
+                'יימחקו גם קבוצות השרירים והתרגילים שמתחת לאימון זה.' +
+                (unsaved > 0
+                  ? ` יש כאן אימון פתוח עם ${unsaved} סטים שטרם נשמרו — הוא יישאר במסך הבית לשמירה.`
+                  : ''),
               destructive: true,
               confirmLabel: 'מחק',
             });
             if (!ok) return;
             await db.transaction(
               'rw',
-              [db.workouts, db.muscleGroups, db.exercises],
+              [db.workouts, db.muscleGroups, db.exercises, db.workoutDrafts],
               async () => {
                 const gs = await db.muscleGroups.where('workoutId').equals(workout.id).toArray();
                 for (const g of gs) {
                   await db.exercises.where('muscleGroupId').equals(g.id).delete();
                 }
                 await db.muscleGroups.where('workoutId').equals(workout.id).delete();
+                await deleteEmptyDrafts([workout.id]);
                 await db.workouts.delete(workout.id);
               },
             );
           }}
         >
-          <IconTrash size={18} />
+          <IconTrash size={17} />
         </button>
       </div>
 
@@ -440,8 +532,8 @@ function SortableWorkoutCard({ workout }: { workout: Workout }) {
               className="btn-primary"
               onClick={async () => {
                 await db.workouts.update(workout.id, {
-                  name: draft.name,
-                  code: draft.code,
+                  name: draft.name.trim() || workout.name,
+                  code: draft.code.trim() || workout.code,
                   defaultRestSec: draft.defaultRestSec,
                   updatedAt: now(),
                 });
@@ -500,7 +592,7 @@ function WorkoutDetails({ workoutId }: { workoutId: string }) {
       id: newId(),
       workoutId,
       name: 'קבוצת שרירים חדשה',
-      order: groups.length,
+      order: nextOrder(groups),
     });
   };
 
@@ -518,17 +610,20 @@ function WorkoutDetails({ workoutId }: { workoutId: string }) {
   };
 
   return (
-    <div className="border-t border-line/60 p-2 bg-ink-900/30">
+    // The body of an open workout is CARVED IN — darker than the card that owns
+    // it, with the inset edge. That one inversion is what makes the muscle
+    // groups and exercises read as contents rather than as more cards.
+    <div className="border-t border-line-muted bg-ink-950 px-2 py-2.5 shadow-field">
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDrag}>
         <SortableContext items={groups.map((g) => g.id)} strategy={verticalListSortingStrategy}>
-          <div className="space-y-2">
+          <div className="space-y-3">
             {groups.map((g) => (
               <MuscleGroupCard key={g.id} group={g} />
             ))}
           </div>
         </SortableContext>
       </DndContext>
-      <button className="btn-subtle !min-h-9 text-xs mt-2" onClick={addGroup}>
+      <button className="btn-subtle w-full !min-h-11 text-xs mt-3" onClick={addGroup}>
         <IconPlus size={14} /> הוסף קבוצת שרירים
       </button>
     </div>
@@ -554,6 +649,7 @@ function MuscleGroupCard({ group }: { group: MuscleGroup }) {
 
   const addExercise = async () => {
     const t = now();
+    const workout = await db.workouts.get(group.workoutId);
     await db.exercises.add({
       id: newId(),
       muscleGroupId: group.id,
@@ -561,10 +657,11 @@ function MuscleGroupCard({ group }: { group: MuscleGroup }) {
       targetSets: 3,
       targetRepsMin: 6,
       targetRepsMax: 10,
-      defaultRestSec: 120,
+      // Inherit the workout's default rest — otherwise that field is write-only.
+      defaultRestSec: workout?.defaultRestSec ?? 120,
       barWeight: 0,
       isMachine: false,
-      order: exercises.length,
+      order: nextOrder(exercises),
       createdAt: t,
       updatedAt: t,
     });
@@ -584,43 +681,60 @@ function MuscleGroupCard({ group }: { group: MuscleGroup }) {
   };
 
   return (
-    <div ref={setNodeRef} style={style} className="card-flat p-2.5 bg-ink-850">
-      <div className="flex items-center gap-2">
+    // Not a card: a muscle group is a LABEL over a list. Giving it its own
+    // raised surface is what made all four levels of the tree look identical.
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(isDragging && 'rounded-2xl bg-ink-950 shadow-card')}
+    >
+      <div className="flex items-center gap-0.5">
         <button
           type="button"
-          className="btn-icon !min-w-8 !min-h-8 text-fg-muted touch-none"
+          className="btn-icon text-fg-ghost hover:text-fg-muted touch-none"
           {...attributes}
           {...listeners}
           aria-label="גרור"
         >
-          <IconGrip size={16} />
+          <IconGrip size={14} />
         </button>
         {editing ? (
+          // Rename commits on Enter (the iOS return key) only; any other blur reverts,
+          // so tapping the trash can't silently persist a half-typed name.
           <input
-            className="input !min-h-9 !py-1 text-sm flex-1"
+            className="input !py-1 text-sm flex-1"
             value={editName}
             autoFocus
             onChange={(e) => setEditName(e.target.value)}
-            onBlur={async () => {
-              await db.muscleGroups.update(group.id, { name: editName.trim() || group.name });
+            onBlur={() => {
+              setEditName(group.name);
               setEditing(false);
             }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-              if (e.key === 'Escape') {
-                setEditName(group.name);
+            onKeyDown={async (e) => {
+              if (e.key === 'Enter') {
+                await db.muscleGroups.update(group.id, { name: editName.trim() || group.name });
                 setEditing(false);
               }
+              if (e.key === 'Escape') setEditing(false);
             }}
           />
         ) : (
-          <button className="flex-1 text-right font-semibold text-sm" onClick={() => setEditing(true)}>
+          <button
+            className="eyebrow flex-1 min-w-0 truncate text-right min-h-11 text-fg-muted hover:text-fg transition-colors"
+            onClick={() => {
+              setEditName(group.name);
+              setEditing(true);
+            }}
+          >
             {group.name}
           </button>
         )}
+        {!editing && (
+          <span className="num shrink-0 px-1 text-2xs text-fg-ghost">{exercises.length}</span>
+        )}
         <button
-          className="btn-icon !min-w-8 !min-h-8 text-bad/80"
-          aria-label="מחק"
+          className="btn-icon text-fg-ghost hover:text-bad"
+          aria-label="מחק קבוצת שרירים"
           onClick={async () => {
             const ok = await confirmDialog({
               title: `למחוק "${group.name}"?`,
@@ -638,16 +752,20 @@ function MuscleGroupCard({ group }: { group: MuscleGroup }) {
           <IconTrash size={14} />
         </button>
       </div>
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEx}>
-        <SortableContext items={exercises.map((e) => e.id)} strategy={verticalListSortingStrategy}>
-          <ul className="mt-2 space-y-1">
-            {exercises.map((ex) => (
-              <ExerciseRow key={ex.id} ex={ex} />
-            ))}
-          </ul>
-        </SortableContext>
-      </DndContext>
-      <button className="btn-subtle !min-h-8 !px-2 text-2xs mt-2" onClick={addExercise}>
+      {exercises.length > 0 && (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEx}>
+          <SortableContext items={exercises.map((e) => e.id)} strategy={verticalListSortingStrategy}>
+            {/* One raised block per group, hairline-divided — a list, not a
+                stack of tiles. No overflow-hidden: it would clip a dragged row. */}
+            <ul className="card-flat mt-1 divide-y divide-line-muted">
+              {exercises.map((ex) => (
+                <ExerciseRow key={ex.id} ex={ex} />
+              ))}
+            </ul>
+          </SortableContext>
+        </DndContext>
+      )}
+      <button className="btn-subtle w-full !min-h-10 text-2xs mt-1.5" onClick={addExercise}>
         <IconPlus size={12} /> הוסף תרגיל
       </button>
     </div>
@@ -667,49 +785,82 @@ function ExerciseRow({ ex }: { ex: Exercise }) {
   const [draft, setDraft] = useState(ex);
 
   return (
-    <li ref={setNodeRef} style={style} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-ink-900">
-      <button
-        type="button"
-        className="btn-icon !min-w-7 !min-h-7 text-fg-muted touch-none"
-        {...attributes}
-        {...listeners}
-        aria-label="גרור"
-      >
-        <IconGrip size={14} />
-      </button>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm truncate">{ex.name}</p>
-        <p className="text-2xs text-fg-muted num">
-          {ex.targetSets}×{ex.targetRepsMin}-{ex.targetRepsMax}
-          {ex.barWeight > 0 && ` · מוט ${ex.barWeight}kg`}
-          {ex.isMachine && ' · מכונה'}
-        </p>
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        'pb-1.5',
+        // Only a lifted row gets its own surface; at rest it is part of the list.
+        isDragging && 'rounded-xl bg-ink-850 shadow-card',
+      )}
+    >
+      <div className="flex items-center gap-0.5">
+        <button
+          type="button"
+          className="btn-icon text-fg-ghost hover:text-fg-muted touch-none"
+          {...attributes}
+          {...listeners}
+          aria-label="גרור"
+        >
+          <IconGrip size={14} />
+        </button>
+        <p className="flex-1 min-w-0 truncate text-sm font-medium">{ex.name}</p>
+        <button
+          className="btn-icon text-fg-dim hover:text-fg"
+          aria-label="ערוך"
+          onClick={() => {
+            setDraft(ex);
+            setEditOpen(true);
+          }}
+        >
+          <IconEdit size={15} />
+        </button>
+        <button
+          className="btn-icon text-fg-ghost hover:text-bad"
+          aria-label="מחק תרגיל"
+          onClick={async () => {
+            const ok = await confirmDialog({
+              title: `למחוק את "${ex.name}"?`,
+              destructive: true,
+              confirmLabel: 'מחק',
+            });
+            if (!ok) return;
+            await db.exercises.delete(ex.id);
+          }}
+        >
+          <IconTrash size={15} />
+        </button>
       </div>
-      <button
-        className="btn-icon !min-w-7 !min-h-7"
-        aria-label="ערוך"
-        onClick={() => {
-          setDraft(ex);
-          setEditOpen(true);
-        }}
-      >
-        <IconEdit size={14} />
-      </button>
-      <button
-        className="btn-icon !min-w-7 !min-h-7 text-bad/80"
-        aria-label="מחק"
-        onClick={async () => {
-          const ok = await confirmDialog({
-            title: `למחוק את "${ex.name}"?`,
-            destructive: true,
-            confirmLabel: 'מחק',
-          });
-          if (!ok) return;
-          await db.exercises.delete(ex.id);
-        }}
-      >
-        <IconTrash size={14} />
-      </button>
+
+      {/* The prescription facts get the full width of the row rather than the
+          scrap left over between three icon buttons — the set×rep target
+          carries the weight, everything else recedes behind it. */}
+      {/* Every numeric token is `dir="ltr"`-isolated: at RTL base level the bidi
+          algorithm reorders "3×10-12" into "10-12×3", which reads as a
+          completely different prescription. Hebrew words stay OUT of `.num` —
+          the mono face has no Hebrew and falls back to spaced-out glyphs. */}
+      <p className="-mt-1.5 ps-11 pe-2 text-2xs leading-snug text-fg-dim">
+        <span dir="ltr" className="num font-semibold text-fg-muted">
+          {`${ex.targetSets}×${ex.targetRepsMin}-${ex.targetRepsMax}`}
+        </span>
+        {ex.barWeight > 0 && (
+          <>
+            {' · מוט '}
+            <span dir="ltr" className="num">{`${ex.barWeight}kg`}</span>
+          </>
+        )}
+        {ex.isMachine && ' · מכונה'}
+        {' · מנוחה '}
+        <span dir="ltr" className="num">
+          {formatRest(ex.defaultRestSec)}
+        </span>
+        {ex.incrementKg !== undefined && (
+          <>
+            {' · קפיצה '}
+            <span dir="ltr" className="num text-accent-text/80">{`${ex.incrementKg}kg`}</span>
+          </>
+        )}
+      </p>
 
       <Modal
         open={editOpen}
@@ -723,14 +874,17 @@ function ExerciseRow({ ex }: { ex: Exercise }) {
             <button
               className="btn-primary"
               onClick={async () => {
+                // A backwards range (min 12, max 6) is a typo, not a request to
+                // discard one of the two numbers — keep both and swap them.
                 await db.exercises.update(ex.id, {
                   name: draft.name.trim() || ex.name,
                   targetSets: draft.targetSets,
-                  targetRepsMin: draft.targetRepsMin,
-                  targetRepsMax: draft.targetRepsMax,
+                  targetRepsMin: Math.min(draft.targetRepsMin, draft.targetRepsMax),
+                  targetRepsMax: Math.max(draft.targetRepsMin, draft.targetRepsMax),
                   defaultRestSec: draft.defaultRestSec,
                   barWeight: draft.barWeight,
                   isMachine: draft.isMachine ?? false,
+                  incrementKg: draft.incrementKg,
                   ...(draft.notes ? { notes: draft.notes } : { notes: '' }),
                   updatedAt: now(),
                 });
@@ -814,6 +968,23 @@ function ExerciseRow({ ex }: { ex: Exercise }) {
                 step={2.5}
                 decimals={2}
                 withSteppers
+              />
+            </div>
+            <div>
+              <label className="label">קפיצת משקל (kg)</label>
+              <NumberInput
+                value={draft.incrementKg ?? ''}
+                onChange={(v) =>
+                  setDraft({
+                    ...draft,
+                    incrementKg: v === '' || Number(v) <= 0 ? undefined : Number(v),
+                  })
+                }
+                min={0}
+                step={0.25}
+                decimals={2}
+                withSteppers
+                placeholder="אוטומטי"
               />
             </div>
             <div className="flex items-end">

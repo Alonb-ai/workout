@@ -15,6 +15,8 @@ interface NumberInputProps {
   /** Use larger touch buttons on each side. */
   withSteppers?: boolean;
   ariaLabel?: string;
+  /** Lets a sibling `<label htmlFor>` point at the real input. */
+  id?: string;
   className?: string;
   decimals?: number;
   inputClassName?: string;
@@ -36,6 +38,7 @@ export function NumberInput({
   suffix,
   withSteppers = false,
   ariaLabel,
+  id,
   className,
   decimals = 2,
   inputClassName,
@@ -67,15 +70,12 @@ export function NumberInput({
     }, 700);
   };
 
-  const commit = (s: string) => {
-    const cleaned = s.replace(',', '.').trim();
-    if (cleaned === '' || cleaned === '-') {
-      onChange('');
-      lastValue.current = '';
-      return;
-    }
-    const n = Number(cleaned);
-    if (!Number.isFinite(n)) return;
+  const push = (v: number | '') => {
+    onChange(v);
+    lastValue.current = v;
+  };
+
+  const clampRound = (n: number): { v: number; didClamp: boolean } => {
     let v = n;
     let didClamp = false;
     if (min !== undefined && v < min) {
@@ -86,29 +86,51 @@ export function NumberInput({
       v = max;
       didClamp = true;
     }
-    // Round to decimals
     const factor = Math.pow(10, decimals);
-    v = Math.round(v * factor) / factor;
-    onChange(v);
-    lastValue.current = v;
-    if (didClamp) {
-      // Update the input text to the clamped value so the user sees what was
-      // actually stored, and flash a brief warn outline as a visual cue.
-      setText(String(v));
-      flashClamp();
+    return { v: Math.round(v * factor) / factor, didClamp };
+  };
+
+  /**
+   * Commit on every keystroke, not on blur. A weight typed but not blurred used
+   * to exist only inside this component's local state, so the autosave — and
+   * the flush that runs when the app is backgrounded — wrote a draft that was
+   * missing the number the user had just entered. Clamping and rounding still
+   * wait for blur, so intermediate text like "1." or "62." stays editable.
+   */
+  const handleInput = (s: string) => {
+    setText(s);
+    const cleaned = s.replace(',', '.').trim();
+    if (cleaned === '' || cleaned === '-') {
+      push('');
+      return;
     }
+    const n = Number(cleaned);
+    if (Number.isFinite(n)) push(n);
+  };
+
+  /** Normalise on blur/Enter: clamp, round, and show exactly what was stored. */
+  const commit = (s: string) => {
+    const cleaned = s.replace(',', '.').trim();
+    const n = Number(cleaned);
+    if (cleaned === '' || cleaned === '-' || !Number.isFinite(n)) {
+      setText('');
+      push('');
+      return;
+    }
+    const { v, didClamp } = clampRound(n);
+    setText(String(v));
+    push(v);
+    if (didClamp) flashClamp();
   };
 
   const step$ = (delta: number) => {
     const current = value === '' ? 0 : Number(value);
-    const next = current + delta;
-    const factor = Math.pow(10, decimals);
-    const v = Math.round(next * factor) / factor;
-    if (min !== undefined && v < min) return;
-    if (max !== undefined && v > max) return;
-    onChange(v);
+    // Clamp rather than bail — bailing left the +/− buttons permanently dead
+    // once the value sat on a boundary.
+    const { v, didClamp } = clampRound(current + delta);
+    push(v);
     setText(String(v));
-    lastValue.current = v;
+    if (didClamp) flashClamp();
   };
 
   return (
@@ -125,13 +147,18 @@ export function NumberInput({
       )}
       <div className="relative flex-1">
         <input
+          {...(id ? { id } : {})}
           type="text"
           inputMode="decimal"
           pattern="[0-9]*[.,]?[0-9]*"
           autoComplete="off"
           className={cn(
             'input num text-center w-full transition-shadow',
-            ghost !== undefined && text === '' && 'placeholder:text-fg-ghost',
+            // A ghost is the app's PRESCRIPTION, not an empty-field hint, so it
+            // gets a dimmed accent instead of placeholder grey — the same colour
+            // family as the prescription strip it came from. A real placeholder
+            // ("—") stays grey.
+            ghost !== undefined && text === '' && 'placeholder:text-accent-text/50',
             clamped && 'ring-2 ring-warn/70',
             inputClassName,
           )}
@@ -140,7 +167,7 @@ export function NumberInput({
             text === '' && ghost !== undefined ? String(ghost) : (placeholder ?? '')
           }
           aria-label={ariaLabel}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => handleInput(e.target.value)}
           onBlur={() => commit(text)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
