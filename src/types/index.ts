@@ -32,6 +32,14 @@ export interface Workout {
   code: WorkoutCode; // short identifier
   order: number;
   defaultRestSec: number;
+  /**
+   * A freestyle workout has no fixed exercise list: every session starts empty
+   * and the user adds lifts as he goes. Its own exercises still live in the plan
+   * (that is what keeps an exercise's id, and therefore its history, stable),
+   * they are just not pre-loaded into the next session.
+   * Not indexed — no Dexie migration needed.
+   */
+  isFreestyle?: boolean;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
