@@ -22,7 +22,7 @@ import {
   saveSession,
   type SaveResult,
 } from './buildSession';
-import { getWorkoutDraft } from '@/db/queries';
+import { ensureFreestyleWorkout, getWorkoutDraft } from '@/db/queries';
 import { todayISO } from '@/utils/dates';
 import { format } from 'date-fns';
 import { toast } from '@/store/toast';
@@ -398,17 +398,32 @@ export function WorkoutPage() {
       {/* Workout tabs — a segmented control on one recessed track, so the strip
           reads as a single switch instead of four loose buttons. */}
       <div className="seg w-full mb-3 overflow-x-auto no-scrollbar">
-        {workouts.map((w) => (
-          <button
-            key={w.id}
-            onClick={() => setSelectedWorkoutId(w.id)}
-            data-active={w.id === selectedWorkoutId}
-            className="pill-tab flex-1 !px-2"
-            title={w.name}
-          >
-            {w.code}
-          </button>
-        ))}
+        {workouts
+          .filter((w) => !w.isFreestyle)
+          .map((w) => (
+            <button
+              key={w.id}
+              onClick={() => setSelectedWorkoutId(w.id)}
+              data-active={w.id === selectedWorkoutId}
+              className="pill-tab flex-1 !px-2"
+              title={w.name}
+            >
+              {w.code}
+            </button>
+          ))}
+        {/* Off-plan training. The workout row is created on the first tap, so a
+            user who never trains freestyle never gets one in his plan. */}
+        <button
+          onClick={async () => {
+            const fs = await ensureFreestyleWorkout(activePlan.id);
+            setSelectedWorkoutId(fs.id);
+          }}
+          data-active={selectedWorkout?.isFreestyle === true}
+          className="pill-tab flex-1 !px-2"
+          title="אימון חופשי — מתחיל ריק, מוסיפים תרגילים תוך כדי"
+        >
+          חופשי
+        </button>
       </div>
 
       {/* Autosave / draft banner */}
@@ -466,6 +481,12 @@ export function WorkoutPage() {
       ) : (
         <Section>
           <div className="space-y-3">
+            {selectedWorkout?.isFreestyle && drafts.length === 0 && (
+              <p className="text-center text-xs text-fg-dim px-6 py-4">
+                אימון חופשי מתחיל ריק. הוסף תרגילים תוך כדי — כל תרגיל שכבר קיים בתכנית
+                שומר על ההיסטוריה וההתקדמות שלו.
+              </p>
+            )}
             <AnimatePresence>
               {drafts.map((d) => (
                 <ExerciseCard

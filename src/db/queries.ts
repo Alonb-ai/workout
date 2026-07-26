@@ -1,4 +1,4 @@
-import { db } from './db';
+import { db, newId } from './db';
 import type {
   ID,
   ISODate,
@@ -7,6 +7,7 @@ import type {
   Session,
   ExerciseLog,
   BodyMeasurement,
+  Workout,
 } from '@/types';
 import type { WorkoutDraft } from '@/features/workout/types';
 import { statsForExercise } from '@/utils/scoring';
@@ -77,6 +78,46 @@ export async function getExerciseStatsHistory(
 /** Fetch the autosaved draft for a workout (if any). */
 export async function getWorkoutDraft(workoutId: ID): Promise<WorkoutDraft | undefined> {
   return db.workoutDrafts.get(workoutId);
+}
+
+/**
+ * The plan's freestyle workout, created on first use.
+ *
+ * Created lazily rather than seeded: a user who never trains off-plan should
+ * never see it, and one who deletes it should not find it back tomorrow.
+ * It carries one muscle group because that is where `AddExerciseModal` files a
+ * newly invented lift.
+ */
+export async function ensureFreestyleWorkout(planId: ID): Promise<Workout> {
+  const existing = (await db.workouts.where('planId').equals(planId).toArray()).find(
+    (w) => w.isFreestyle,
+  );
+  if (existing) return existing;
+
+  const t = Date.now();
+  const siblings = await db.workouts.where('planId').equals(planId).toArray();
+  const workout: Workout = {
+    id: newId(),
+    planId,
+    name: 'אימון חופשי',
+    code: 'FS',
+    // Always last in the tab strip.
+    order: 1 + Math.max(-1, ...siblings.map((w) => w.order)),
+    defaultRestSec: 150,
+    isFreestyle: true,
+    createdAt: t,
+    updatedAt: t,
+  };
+  await db.transaction('rw', [db.workouts, db.muscleGroups], async () => {
+    await db.workouts.add(workout);
+    await db.muscleGroups.add({
+      id: newId(),
+      workoutId: workout.id,
+      name: 'תרגילים',
+      order: 0,
+    });
+  });
+  return workout;
 }
 
 /** Did the user actually log anything in this draft? */

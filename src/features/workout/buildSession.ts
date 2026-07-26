@@ -32,6 +32,11 @@ export async function buildDraftFromWorkout(
   const workout = await db.workouts.get(workoutId);
   if (!workout) return null;
 
+  // A freestyle session starts blank on purpose. Its exercises are still real
+  // plan rows — they have to be, or their ids and their history would not
+  // survive — but pre-loading them would turn it back into a fixed workout.
+  if (workout.isFreestyle) return { workout, drafts: [] };
+
   const groups = (
     await db.muscleGroups.where('workoutId').equals(workoutId).toArray()
   ).sort((a, b) => a.order - b.order);
@@ -147,6 +152,12 @@ export async function reconcileDraftWithPlan(
   workoutId: string,
   drafts: DraftExercise[],
 ): Promise<DraftExercise[]> {
+  // A freestyle workout owns every exercise ever invented in one, so appending
+  // "exercises added to the plan since" would drag the whole back catalogue
+  // into a restored session. Refresh nothing, append nothing.
+  const workout = await db.workouts.get(workoutId);
+  if (workout?.isFreestyle) return drafts;
+
   const groups = (
     await db.muscleGroups.where('workoutId').equals(workoutId).toArray()
   ).sort((a, b) => a.order - b.order);
