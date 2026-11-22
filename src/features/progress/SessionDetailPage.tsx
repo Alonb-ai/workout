@@ -95,9 +95,16 @@ async function recomputeSession(sessionId: string): Promise<void> {
  * screen was tagging ירידה. A single user has hundreds of sessions at most, so
  * walking the tail is cheap and always right.
  */
-async function recomputeFrom(sessionId: string): Promise<void> {
-  const edited = await db.sessions.get(sessionId);
-  if (!edited) return;
+async function recomputeFrom(sessionId: string, oldDate?: string): Promise<void> {
+  const found = await db.sessions.get(sessionId);
+  if (!found) return;
+  // Moving a session later also changes the sessions it used to precede.
+  const edited =
+    oldDate && oldDate < found.date ? { date: oldDate, startedAt: 0 } : found;
+  await recomputeAfter(edited);
+}
+
+async function recomputeAfter(edited: { date: string; startedAt?: number }): Promise<void> {
   const isAfter = (s: { date: string; startedAt?: number }) =>
     s.date > edited.date ||
     (s.date === edited.date && (s.startedAt ?? 0) >= (edited.startedAt ?? 0));
@@ -155,6 +162,7 @@ export function SessionDetailPage() {
       await db.exerciseLogs.where('sessionId').equals(session.id).delete();
       await db.sessions.delete(session.id);
     });
+    await recomputeAfter({ date: session.date, startedAt: 0 });
     toast.success('האימון נמחק');
     navigate('/progress', { replace: true });
   };
@@ -309,8 +317,9 @@ export function SessionDetailPage() {
               className="btn-primary"
               onClick={async () => {
                 if (!dateDraft) return;
+                const oldDate = session.date;
                 await db.sessions.update(session.id, { date: dateDraft });
-                await recomputeFrom(session.id);
+                await recomputeFrom(session.id, oldDate);
                 toast.success('התאריך עודכן');
                 setDateEditOpen(false);
               }}
