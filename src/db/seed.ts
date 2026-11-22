@@ -176,7 +176,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   restTimerSound: true,
   dismissedStalls: {},
   seeded: false,
-  schemaVersion: 5,
+  schemaVersion: 6,
   bodyReminderEnabled: false,
   bodyReminderDow: 0,
   bodyReminderTime: '09:00',

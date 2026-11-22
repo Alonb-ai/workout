@@ -11,16 +11,25 @@ import type {
 } from '@/types';
 import type { WorkoutDraft } from '@/features/workout/types';
 import { statsForExercise } from '@/utils/scoring';
+import { historyIdsOf } from './repair';
 
-/** Get all completed sessions for an exercise (ordered oldest → newest). */
+/**
+ * Get all completed sessions for an exercise (ordered oldest → newest).
+ *
+ * Includes the logs of every row linked into it (`Exercise.historyIds`): the
+ * copy from before the plan was duplicated, or a variant the user linked. An
+ * exercise row that no longer exists still returns its own logs.
+ */
 export async function getExerciseHistory(exerciseId: ID): Promise<{
   session: Session;
   exerciseLog: ExerciseLog;
   sets: SetLog[];
 }[]> {
+  const ex = await db.exercises.get(exerciseId);
+  const ids = ex ? historyIdsOf(ex) : [exerciseId];
   const logs = await db.exerciseLogs
     .where('exerciseId')
-    .equals(exerciseId)
+    .anyOf(ids)
     .toArray();
   const sessionIds = Array.from(new Set(logs.map((l) => l.sessionId)));
   const sessions = await db.sessions.bulkGet(sessionIds);
@@ -31,7 +40,7 @@ export async function getExerciseHistory(exerciseId: ID): Promise<{
 
   const allSets = await db.setLogs
     .where('exerciseId')
-    .equals(exerciseId)
+    .anyOf(ids)
     .toArray();
   const setsByLog = new Map<ID, SetLog[]>();
   for (const s of allSets) {
