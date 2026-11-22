@@ -16,13 +16,13 @@ import {
   totalVolume as setsVolume,
 } from '@/utils/scoring';
 import {
-  prescribe,
-  resolveIncrement,
+  prescriptionForExercise,
+  targetRepsForSet,
   pastSetsFromLogs,
   formatLastSets,
+  STUCK_SESSIONS,
   type PastSet,
 } from '@/utils/progression';
-import { detectStall } from '@/utils/stall';
 import { getExerciseStatsHistory, getRecentWorkoutSessions } from '@/db/queries';
 
 /** Build an initial draft for the workout by pulling last-session values. */
@@ -55,14 +55,9 @@ export async function buildDraftFromWorkout(
   return { workout, drafts };
 }
 
-/** The sets logged for this exercise in its most recent completed session. */
-async function lastSessionSets(
-  exerciseId: string,
-  stats: ExerciseSessionStats[],
-): Promise<PastSet[]> {
-  if (stats.length === 0) return [];
-  const lastSessionId = stats[stats.length - 1]!.sessionId;
-  const logs = await db.exerciseLogs.where('sessionId').equals(lastSessionId).toArray();
+/** The sets logged for this exercise in one completed session. */
+async function sessionSets(exerciseId: string, sessionId: string): Promise<PastSet[]> {
+  const logs = await db.exerciseLogs.where('sessionId').equals(sessionId).toArray();
   const log = logs.find((l) => l.exerciseId === exerciseId);
   if (!log) return [];
   const sets = (await db.setLogs.where('exerciseLogId').equals(log.id).toArray()).sort(
@@ -71,29 +66,24 @@ async function lastSessionSets(
   return pastSetsFromLogs(sets);
 }
 
+/** Sets of the most recent sessions, oldest → newest — what `prescribe` reads. */
+async function recentSessionSets(
+  exerciseId: string,
+  stats: ExerciseSessionStats[],
+): Promise<PastSet[][]> {
+  const recent = stats.slice(-STUCK_SESSIONS);
+  return Promise.all(recent.map((s) => sessionSets(exerciseId, s.sessionId)));
+}
+
 export async function buildDraftForExercise(
   ex: Exercise,
   group: MuscleGroup,
 ): Promise<DraftExercise> {
   const stats = await getExerciseStatsHistory(ex.id);
-  const lastSets = await lastSessionSets(ex.id, stats);
+  const history = await recentSessionSets(ex.id, stats);
+  const lastSets = history[history.length - 1] ?? [];
   const settings = await db.settings.get('singleton');
-
-  const increment = resolveIncrement({
-    ...(ex.incrementKg !== undefined ? { incrementKg: ex.incrementKg } : {}),
-    ...(ex.isMachine ? { isMachine: true } : {}),
-    inventory: settings?.plateInventory ?? [],
-  });
-
-  const prescription = prescribe({
-    lastSets,
-    targetSets: ex.targetSets,
-    repsMin: ex.targetRepsMin,
-    repsMax: ex.targetRepsMax,
-    increment,
-    isStalled: detectStall(stats, ex.name) !== null,
-    ...(ex.seedWeight !== undefined ? { seedWeight: ex.seedWeight } : {}),
-  });
+  const prescription = prescriptionForExercise(ex, history, settings?.plateInventory ?? []);
 
   // Every set is pre-loaded with the prescription as ghost text, so tapping ✓
   // logs exactly what the app told the user to do. Typing over it still wins.
@@ -110,7 +100,7 @@ export async function buildDraftForExercise(
     reps: '' as number | '',
     completed: false,
     ...(prescription.weight > 0 ? { ghostWeight: prescription.weight } : {}),
-    ...(hasPrescription ? { ghostReps: prescription.reps } : {}),
+    ...(hasPrescription ? { ghostReps: targetRepsForSet(prescription, i) } : {}),
   }));
 
   const lastSummary = formatLastSets(lastSets);
@@ -184,7 +174,7 @@ export async function reconcileDraftWithPlan(
               reps: '' as number | '',
               completed: false,
               ...(d.prescription && d.prescription.weight > 0
-                ? { ghostWeight: d.prescription.weight, ghostReps: d.prescription.reps }
+                ? { ghostWeight: d.prescription.weight, ghostReps: targetRepsForSet(d.prescription, d.sets.length + i) }
                 : {}),
             })),
           ];

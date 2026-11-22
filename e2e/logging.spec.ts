@@ -62,6 +62,13 @@ test('falling short of the rep range holds the weight instead of raising it', as
   await expect(strip.getByText('עוד חזרה')).toBeVisible();
   await expect(strip.getByText('60', { exact: true })).toBeVisible();
   await expect(strip.getByText('העלאת משקל')).toBeHidden();
+  // Each set keeps its own target: the four full sets stay at 5, only the
+  // short one is asked for one more rep — not 3 on every set, not 5 on every set.
+  await expect(strip.getByText('5,5,5,5,4', { exact: true })).toBeVisible();
+  await page.getByLabel(`סמן לפי היעד · ${BENCH} · סט 5`).click();
+  await expect(repsBox(page, 5)).toHaveValue('4');
+  await page.getByLabel(`סמן לפי היעד · ${BENCH} · סט 1`).click();
+  await expect(repsBox(page, 1)).toHaveValue('5');
 });
 
 test('a workout logged yesterday and never saved is rescued from the dashboard', async ({ page }) => {
