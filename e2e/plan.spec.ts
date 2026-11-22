@@ -456,15 +456,17 @@ test('deleting a plan warns about, and preserves, an unsaved session', async ({ 
   await expect.poll(async () => (await table(page, 'workoutDrafts')).length).toBe(1);
 });
 
-test('an empty draft is still cleaned up when its workout is deleted', async ({ page }) => {
+test('a typed-but-unticked draft survives deleting its workout', async ({ page }) => {
   await openWorkout(page);
-  // Typed but never ticked — nothing was confirmed, so nothing is at stake.
+  // Typed but never ticked. The owner decided (2026-11-22) that anything entered
+  // is worth keeping, so the cascade must not drop it (CLAUDE.md rule 7).
   await weightBox(page, 1).fill('60');
   await openPlan(page);
   await workoutCard(page, 'Upper A').getByLabel('מחק אימון').click();
+  // No ticked sets, so there is no "unsaved sets" count to warn about.
   await expect(page.getByRole('dialog')).not.toContainText('סטים שטרם נשמרו');
   await confirmDelete(page).click();
-  await expect.poll(async () => (await table(page, 'workoutDrafts')).length).toBe(0);
+  await expect.poll(async () => (await table(page, 'workoutDrafts')).length).toBe(1);
 });
 
 test('deleting the active plan promotes another one', async ({ page }) => {
