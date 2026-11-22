@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SetRow } from './SetRow';
 import { PlateCalcModal } from './PlateCalcModal';
+import { WarmupModal } from './WarmupModal';
+import { ExerciseNotesModal } from './ExerciseNotesModal';
 import type { DraftExercise, DraftSet } from './types';
 import { formatSetReps, type Prescription, type ProgressionKind } from '@/utils/progression';
 import {
@@ -14,7 +16,12 @@ import {
   IconClock,
   IconTarget,
   IconWarn,
+  IconNote,
+  IconStairs,
+  IconLink,
 } from '@/components/Icon';
+import { toast } from '@/store/toast';
+import { formatHebDate } from '@/utils/dates';
 import { cn } from '@/utils/cn';
 import { formatHM } from '@/utils/dates';
 import { useTimerStore } from '@/store/timer';
@@ -59,10 +66,12 @@ function resizeSets(sets: DraftSet[], targetSets: number): DraftSet[] {
     (m, s, i) => (s.completed || s.weight !== '' || s.reps !== '' ? i : m),
     -1,
   );
-  const want = Math.max(targetSets, lastUsed + 1);
+  // Drop sets ride along on top of the planned sets, they are not part of it.
+  const drops = sets.filter((s) => s.isDrop).length;
+  const want = Math.max(targetSets + drops, lastUsed + 1);
   if (sets.length === want) return sets;
   if (sets.length > want) return sets.slice(0, want);
-  const template = sets[sets.length - 1];
+  const template = [...sets].reverse().find((s) => !s.isDrop);
   const extra: DraftSet[] = Array.from({ length: want - sets.length }, (_, i) => ({
     setNumber: sets.length + i + 1,
     weight: '',
@@ -149,8 +158,26 @@ interface LoadForm {
   incrementKg: number | '';
 }
 
+/** Planned (non-drop) sets that are ticked. */
+export function doneWorkSets(d: DraftExercise): number {
+  return d.sets.filter((s) => s.completed && !s.isDrop).length;
+}
+
+export interface SupersetInfo {
+  /** Every exercise in the superset, in lineup order (this one included). */
+  members: DraftExercise[];
+  /** This card's position in `members`. */
+  index: number;
+}
+
 interface Props {
   draft: DraftExercise;
+  /** Set when this card is part of a superset run. */
+  superset?: SupersetInfo;
+  /** Join this exercise and the one below it into a superset. */
+  onLinkNext?: () => void;
+  /** Take this exercise out of its superset. */
+  onUnlink?: () => void;
   isStalled?: boolean;
   onChange: (next: DraftExercise) => void;
   onRemove: () => void;
@@ -160,7 +187,17 @@ interface Props {
   onRetire?: () => void;
 }
 
-export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onRetire }: Props) {
+export function ExerciseCard({
+  draft,
+  superset,
+  onLinkNext,
+  onUnlink,
+  isStalled,
+  onChange,
+  onRemove,
+  onSwap,
+  onRetire,
+}: Props) {
   const [plateOpen, setPlateOpen] = useState(false);
   const [plateWeight, setPlateWeight] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -170,13 +207,14 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onR
   const [targetForm, setTargetForm] = useState<TargetForm | null>(null);
   const [loadForm, setLoadForm] = useState<LoadForm | null>(null);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [warmupOpen, setWarmupOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const [renamePersist, setRenamePersist] = useState(false);
 
   const startTimer = useTimerStore((s) => s.start);
 
-  const completedCount = draft.sets.filter((s) => s.completed).length;
+  const completedCount = doneWorkSets(draft);
 
   const updateSet = (index: number, next: DraftSet) => {
     const sets = [...draft.sets];
@@ -202,14 +240,46 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onR
     if (reps === undefined || reps <= 0) return; // nothing to log yet
     const weight = s.weight !== '' ? Number(s.weight) : (s.ghostWeight ?? 0);
     sets[index] = { ...s, weight, reps, completed: true, completedAt: Date.now() };
-    onChange({ ...draft, sets });
-    startTimer(draft.defaultRestSec, draft.exerciseName);
+    const next = { ...draft, sets };
+    onChange(next);
+    startRestAfter(next, index);
+  };
+
+  /**
+   * When does rest start? Not between a set and the drop set hanging off it,
+   * and not between exercises of a superset: only once every member has done
+   * this round. Until then, point him at the next exercise in the rotation.
+   */
+  const startRestAfter = (next: DraftExercise, index: number) => {
+    const following = next.sets[index + 1];
+    if (following?.isDrop && !following.completed) return;
+
+    if (superset && superset.members.length > 1) {
+      const mine = doneWorkSets(next);
+      const n = superset.members.length;
+      const rotation = Array.from(
+        { length: n - 1 },
+        (_, k) => superset.members[(superset.index + 1 + k) % n]!,
+      );
+      const pending = rotation.find(
+        (p) => doneWorkSets(p) < mine && doneWorkSets(p) < p.sets.filter((x) => !x.isDrop).length,
+      );
+      if (pending) {
+        toast.info(`סופרסט · עכשיו ${pending.exerciseName}`);
+        return;
+      }
+      const rest = Math.max(next.defaultRestSec, ...superset.members.map((m) => m.defaultRestSec));
+      startTimer(rest, 'סופרסט');
+      return;
+    }
+    startTimer(next.defaultRestSec, next.exerciseName);
   };
 
   const addSet = () => {
-    const last = draft.sets[draft.sets.length - 1];
+    // A new planned set copies the last planned set, never a drop.
+    const last = [...draft.sets].reverse().find((s) => !s.isDrop);
     const next: DraftSet = {
-      setNumber: (last?.setNumber ?? 0) + 1,
+      setNumber: draft.sets.length + 1,
       weight: '',
       reps: '',
       completed: false,
@@ -223,6 +293,40 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onR
     onChange({ ...draft, sets: [...draft.sets, next] });
   };
 
+  /**
+   * Add a drop set after the set he is on (or after the drop chain already
+   * hanging off it). Pre-filled with ~80% of that set's weight as a
+   * ghost; reps are left to him — a drop goes to failure, there is no target.
+   */
+  const addDrop = () => {
+    const sets = draft.sets;
+    let anchor = -1;
+    // The set he is on: the last one ticked or typed into.
+    sets.forEach((s, i) => {
+      if (s.completed || s.weight !== '' || s.reps !== '') anchor = i;
+    });
+    if (anchor < 0) anchor = sets.length - 1;
+    while (sets[anchor + 1]?.isDrop) anchor++;
+    const parent = sets[anchor];
+    const parentW =
+      parent === undefined ? 0 : parent.weight !== '' ? Number(parent.weight) : (parent.ghostWeight ?? 0);
+    const step = draft.incrementKg ?? 2.5;
+    const ghost = Math.round(Math.floor((parentW * 0.8) / step + 1e-9) * step * 100) / 100;
+    const row: DraftSet = {
+      setNumber: 0,
+      weight: '',
+      reps: '',
+      completed: false,
+      isDrop: true,
+      ...(ghost > 0 ? { ghostWeight: ghost } : {}),
+    };
+    const next = [...sets.slice(0, anchor + 1), row, ...sets.slice(anchor + 1)].map((s, i) => ({
+      ...s,
+      setNumber: i + 1,
+    }));
+    onChange({ ...draft, sets: next });
+  };
+
   const removeSet = (index: number) => {
     if (draft.sets.length <= 1) return;
     const sets = draft.sets.filter((_, i) => i !== index).map((s, i) => ({
@@ -233,6 +337,18 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onR
   };
 
   const incomplete = completedCount < draft.targetSets;
+
+  // Planned sets are numbered 1..n; a drop set shows as "דרופ" under its set.
+  let ordinal = 0;
+  const ordinals = draft.sets.map((s) => (s.isDrop ? null : ++ordinal));
+
+  const workWeight = (() => {
+    const typed = draft.sets.find((s) => !s.isDrop && s.weight !== '');
+    if (typed) return Number(typed.weight);
+    return draft.prescription?.weight ?? draft.sets[0]?.ghostWeight ?? 0;
+  })();
+
+  const hasNotes = !!(draft.notes || draft.lastNote || draft.sessionNote?.trim());
 
   return (
     // No `layout` prop: this card re-renders on every keystroke, and layout
@@ -248,7 +364,7 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onR
       <div className="px-3 py-2.5 flex items-center gap-2 border-b border-line/60">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <h3 className="font-bold truncate">{draft.exerciseName}</h3>
+            <h3 className="font-bold leading-tight line-clamp-2 break-words">{draft.exerciseName}</h3>
             {isStalled && (
               <span className="chip border-warn/40 text-warn bg-warn-soft" title="תקוע 3 אימונים">
                 <IconWarn size={11} /> תקוע
@@ -260,6 +376,11 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onR
             {' '}· מנוחה {formatHM(draft.defaultRestSec)}
             {draft.isMachine && ' · מכונה'}
           </p>
+          {superset && (
+            <p className="text-2xs text-accent-text flex items-center gap-1">
+              <IconLink size={11} /> סופרסט {superset.index + 1}/{superset.members.length}
+            </p>
+          )}
         </div>
         {/* Turns green the moment the exercise is finished — the card's own
             "done" signal, so the user can scan the list rather than count. */}
@@ -275,6 +396,17 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onR
         >
           {completedCount}/{draft.targetSets}
         </span>
+        <button
+          type="button"
+          className={cn(
+            'btn-icon !min-w-9 !min-h-9',
+            hasNotes ? 'text-accent-text' : 'text-fg-dim hover:text-accent-text',
+          )}
+          aria-label="הערות לתרגיל"
+          onClick={() => setNotesOpen(true)}
+        >
+          <IconNote size={18} />
+        </button>
         <Link
           to={`/workout/exercise/${draft.exerciseId}/history`}
           className="btn-icon !min-w-9 !min-h-9 text-fg-dim hover:text-info"
@@ -291,6 +423,35 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onR
           <IconDots size={18} />
         </button>
       </div>
+
+      {hasNotes && (
+        <button
+          type="button"
+          onClick={() => setNotesOpen(true)}
+          className="relative block w-full text-right px-3 py-2 bg-ink-800/40 border-b border-line/60 space-y-0.5"
+          aria-label="פתח הערות"
+        >
+          <span className="absolute inset-y-0 start-0 w-[3px] bg-accent/70" aria-hidden />
+          {draft.notes && (
+            <p className="text-xs text-fg whitespace-pre-wrap line-clamp-3">
+              <IconNote size={12} className="inline -mt-0.5 me-1 text-accent-text" />
+              {draft.notes}
+            </p>
+          )}
+          {draft.lastNote && (
+            <p className="text-2xs text-fg-muted whitespace-pre-wrap line-clamp-2">
+              <span className="text-fg-dim">פעם קודמת ({formatHebDate(draft.lastNote.date)}): </span>
+              {draft.lastNote.text}
+            </p>
+          )}
+          {draft.sessionNote?.trim() && (
+            <p className="text-2xs text-info whitespace-pre-wrap line-clamp-2">
+              <span className="text-fg-dim">היום: </span>
+              {draft.sessionNote}
+            </p>
+          )}
+        </button>
+      )}
 
       {draft.prescription && (
         <PrescriptionStrip
@@ -319,6 +480,7 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onR
               key={i}
               set={s}
               index={i}
+              ordinal={ordinals[i] ?? null}
               exerciseName={draft.exerciseName}
               canRemove={draft.sets.length > 1}
               onChange={(n) => updateSet(i, n)}
@@ -333,14 +495,24 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onR
         </div>
 
         <div className="flex items-center justify-between mt-2 pt-2 border-t border-line/60">
-          <button
-            type="button"
-            onClick={addSet}
-            className="btn-subtle !min-h-9 !px-2 text-xs"
-          >
-            <IconPlus size={16} /> הוסף סט
-          </button>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={addSet}
+              className="btn-subtle !min-h-9 !px-2 text-xs"
+            >
+              <IconPlus size={16} /> הוסף סט
+            </button>
+            <button
+              type="button"
+              onClick={addDrop}
+              className="btn-subtle !min-h-9 !px-2 text-xs"
+              aria-label={`הוסף דרופ סט · ${draft.exerciseName}`}
+            >
+              <IconPlus size={14} /> דרופ
+            </button>
+          </div>
+          <div className="flex items-center gap-1">
             {/* Only once he has actually started this lift. Flagging "חסר" on a
                 card he has not touched yet is nagging, not information — the
                 0/5 counter in the header already says it is untouched. */}
@@ -349,6 +521,14 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onR
                 <IconWarn size={11} /> חסר
               </span>
             )}
+            <button
+              type="button"
+              className="btn-subtle !min-h-9 !px-2 text-xs"
+              aria-label={`חימום · ${draft.exerciseName}`}
+              onClick={() => setWarmupOpen(true)}
+            >
+              <IconStairs size={16} /> חימום
+            </button>
             <button
               type="button"
               className="btn-subtle !min-h-9 !px-2 text-xs"
@@ -373,8 +553,51 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onR
         exerciseName={draft.exerciseName}
       />
 
+      <WarmupModal
+        open={warmupOpen}
+        onClose={() => setWarmupOpen(false)}
+        draft={draft}
+        workWeight={workWeight}
+      />
+
+      <ExerciseNotesModal
+        open={notesOpen}
+        onClose={() => setNotesOpen(false)}
+        draft={draft}
+        onChange={onChange}
+      />
+
       <Modal open={menuOpen} onClose={() => setMenuOpen(false)} title="פעולות תרגיל">
         <ul className="divide-y divide-line">
+          {onLinkNext && (
+            <li>
+              <button
+                className="w-full text-right py-3 px-1 hover:bg-ink-800 rounded-lg"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onLinkNext();
+                }}
+              >
+                סופרסט עם התרגיל הבא
+                <span className="block text-2xs text-fg-dim">
+                  מנוחה רק אחרי שעשית סט בכל התרגילים שבסופרסט. נשמר גם לאימונים הבאים
+                </span>
+              </button>
+            </li>
+          )}
+          {onUnlink && (
+            <li>
+              <button
+                className="w-full text-right py-3 px-1 hover:bg-ink-800 rounded-lg"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onUnlink();
+                }}
+              >
+                הוצא מהסופרסט
+              </button>
+            </li>
+          )}
           {onSwap && (
             <li>
               <button
@@ -670,24 +893,6 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onR
             </label>
           </div>
         )}
-      </Modal>
-
-      <Modal
-        open={notesOpen}
-        onClose={() => setNotesOpen(false)}
-        title="הערות"
-        footer={
-          <button className="btn-primary" onClick={() => setNotesOpen(false)}>
-            שמור
-          </button>
-        }
-      >
-        <textarea
-          className="input min-h-32 text-sm"
-          placeholder="הערות לתרגיל (טיפים, צורת ביצוע, וכו׳)…"
-          value={draft.notes ?? ''}
-          onChange={(e) => onChange({ ...draft, notes: e.target.value })}
-        />
       </Modal>
 
       <Modal

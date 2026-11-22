@@ -179,6 +179,28 @@ Covered by `src/utils/progression.test.ts` and the E2E specs; run both after tou
   modal). `rankSimilar` scores same primary muscle highest. `EXERCISE_CATALOG` holds ~60
   Hebrew exercises offered when the user has no good match.
 
+## Notes, warm-up, drop sets, supersets
+
+- **Two notes per exercise.** `Exercise.notes` is the *pinned* note (seat height, grip),
+  shown on the card every session and written straight to the exercise row on each
+  keystroke from `ExerciseNotesModal` — it never depends on the session being saved.
+  `DraftExercise.sessionNote` is today's note; it is stored as `ExerciseLog.notes` and
+  comes back next time as `DraftExercise.lastNote` (newest note in the last 3 sessions).
+  Old logs hold a *copy* of the pinned note or a marker like `[נוסף באימון בודד]`;
+  `isUserNote` filters those out. A fresh draft always has `sessionNote: ''` —
+  `undefined` means an old-format draft whose typed note still sits in `notes`
+  (`reconcileDraftWithPlan` and `saveSession` carry it over, never drop it).
+- **Warm-up** (`utils/warmup.ts`, `WarmupModal`) is a guide only: never logged. Percentages
+  are of the total load (net + bar), floored to the loading step, converted back to net.
+- **Drop sets** are `DraftSet.isDrop` / `SetLog.isDrop` rows right after their parent set.
+  They count toward volume but **not** toward planned/completed sets (`statsForExercise`,
+  `doneWorkSets`), and `pastSetsFromLogs` drops them so progression never reads them.
+  Ticking a set whose drop is still open does not start the rest timer.
+- **Supersets**: neighbouring exercises sharing `Exercise.supersetGroup` (non-indexed,
+  persisted when linked from the logger ⋯ menu). Membership is by adjacency
+  (`supersetRuns`). Rest starts only when every member has done the round, using the
+  longest member rest; until then a toast names the next exercise.
+
 ## Design system
 
 Tokens live in `tailwind.config.js`, primitives in `src/index.css` under `@layer

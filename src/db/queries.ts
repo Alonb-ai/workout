@@ -132,6 +132,7 @@ export async function ensureFreestyleWorkout(planId: ID): Promise<Workout> {
 /** Did the user actually log anything in this draft? */
 export function draftHasWork(d: WorkoutDraft): boolean {
   if (d.notes.trim().length > 0) return true;
+  if (d.drafts.some((ex) => (ex.sessionNote ?? '').trim().length > 0)) return true;
   return d.drafts.some((ex) => ex.sets.some((s) => s.completed));
 }
 

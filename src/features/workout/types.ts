@@ -13,6 +13,8 @@ export interface DraftSet {
    * copied into the saved SetLog. Absent on drafts made before it existed.
    */
   completedAt?: number;
+  /** Drop set hanging off the set before it. See SetLog.isDrop. */
+  isDrop?: boolean;
   /** Snapshot from last session for ghost-text and comparisons. */
   ghostWeight?: number;
   ghostReps?: number;
@@ -30,7 +32,14 @@ export interface DraftExercise {
   barWeight: number;
   isMachine: boolean;
   defaultRestSec: number;
+  /** Display copy of the exercise's pinned note (`Exercise.notes`). */
   notes?: string;
+  /** Note for this session only; saved to `ExerciseLog.notes`. */
+  sessionNote?: string;
+  /** The most recent session note for this exercise, shown as a reminder. */
+  lastNote?: { text: string; date: ISODate };
+  /** See Exercise.supersetGroup. */
+  supersetGroup?: string;
   seedWeight?: number;
   /** Per-exercise loading step; see Exercise.incrementKg. */
   incrementKg?: number;

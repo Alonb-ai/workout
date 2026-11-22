@@ -1040,9 +1040,10 @@ function ExerciseRow({ ex }: { ex: Exercise }) {
             </div>
           </div>
           <div>
-            <label className="label">הערות</label>
+            <label className="label">הערה קבועה</label>
             <textarea
               className="input min-h-20"
+              placeholder="גובה כיסא, אחיזה, הגדרות מכונה… מופיעה על התרגיל בכל אימון"
               value={draft.notes ?? ''}
               onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
             />

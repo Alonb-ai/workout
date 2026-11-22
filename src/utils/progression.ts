@@ -62,7 +62,12 @@ export interface PastSet {
 }
 
 export function pastSetsFromLogs(logs: SetLog[]): PastSet[] {
-  return logs.map((s) => ({ weight: s.weight, reps: s.reps, completed: s.completed }));
+  // Drop sets are extra work tacked onto a set, at a lower weight and to
+  // failure. Reading them as sets would make "the weakest set" a drop and
+  // hold the weight forever.
+  return logs
+    .filter((s) => !s.isDrop)
+    .map((s) => ({ weight: s.weight, reps: s.reps, completed: s.completed }));
 }
 
 /** Round to a clean multiple of the increment, avoiding 42.50000000000001. */
