@@ -7,7 +7,8 @@ import { IconArrowRight, IconChart, IconTrophy, IconWarn } from '@/components/Ic
 import { getExerciseHistory, getLatestBodyMeasurement } from '@/db/queries';
 import { statsForExercise, compareToPrevious } from '@/utils/scoring';
 import { detectStall } from '@/utils/stall';
-import { computeProgressionRate, suggestDeload, findSubstitutes } from '@/utils/insights';
+import { computeProgressionRate, findSubstitutes } from '@/utils/insights';
+import { deloadOf, pastSetsFromLogs, prescriptionForExercise } from '@/utils/progression';
 import {
   matchStrengthLift,
   assessStrength,
@@ -149,7 +150,18 @@ export function ExerciseHistoryPage() {
   );
   const stall = detectStall(stats, exercise.name);
   const progression = computeProgressionRate(stats);
-  const deload = stall ? suggestDeload(stats) : null;
+  // Same coach as the logger, so this page never contradicts today's target.
+  const deload = stall
+    ? deloadOf(
+        prescriptionForExercise(
+          exercise,
+          safeHistory.map((h) =>
+            pastSetsFromLogs([...h.sets].sort((a, b) => a.setNumber - b.setNumber)),
+          ),
+          settings.plateInventory,
+        ),
+      )
+    : null;
   const subs = stall ? findSubstitutes(exercise.id, allExercises ?? [], 3, groupNameById) : [];
   const exById = new Map((allExercises ?? []).map((e) => [e.id, e]));
   const linked = (exercise.historyIds ?? [])

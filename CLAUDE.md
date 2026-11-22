@@ -119,15 +119,26 @@ All this logic lives in `src/utils/scoring.ts` and `src/utils/stall.ts`. Run `np
 `src/utils/progression.ts` decides **what to lift today** for each exercise. It is the
 difference between a logbook and a coach, so treat it as load-bearing.
 
-- **Double progression.** Hold the weight until every target set is completed at the
-  **top** of the rep range, then add one increment and drop back to the bottom.
-- **The weakest set at the top weight decides.** `8, 8, 7` in a 6–8 range has not earned
-  an increase. Warm-up sets below the top weight are ignored entirely.
+- **Per-set double progression.** Each set has its own target: hold the weight and ask
+  for one more rep on every set below the top of the range (`10,10,8` → `10,10,9`). A set
+  at or above the top keeps its count — a target never asks for fewer reps than last time,
+  and 3–4 reps never jump to the top of the range. `Prescription.setReps` carries the list
+  (optional only for drafts saved before it existed — read via `targetRepsForSet`).
+- **Working weight** = heaviest weight with a set inside the rep range (a single grinder
+  above it, e.g. `22×3` then `18×6,6,5`, is an attempt, not the working weight). Lighter
+  warm-ups are ignored; missing sets are padded with the weakest set at that weight.
+- **Increase** when every target set hit the top. New reps = Epley at the new weight
+  **minus one** (replay of the owner's history showed raw Epley overshoots by ~1),
+  clamped to `[repsMin, repsMax-1]`.
+- **Stuck** = last 3 sessions at the same weight, each with ≥ half the target sets there,
+  and none beat the first on total reps. Then: weakest set within 1 of the top → `break`
+  (heavier, fewer reps — the owner's own rule); else some set in range → step back ONE
+  increment; else ~10% deload. One rep from the top is never deloaded. The dashboard and
+  exercise page take their deload figure from the same `prescriptionForExercise`, so the
+  coach and the warnings never disagree.
 - **Increment** = `Exercise.incrementKg` if set → else 2.5 kg for machines → else the
   smallest **owned plate pair** (`smallestPairIncrement`, i.e. 2 × the smallest plate).
   `incrementKg` is an optional, non-indexed field: no Dexie migration needed to add it.
-- **Stall outranks hold.** A lift flagged by `detectStall` gets a deload prescription
-  instead of another identical session — holding is what caused the stall.
 - **0 kg means bodyweight**, and reps are the only progress signal there. Never let the
   engine turn a 0 kg top set into "load 2.5 kg".
 - **A first-ever session with no `seedWeight` has no prescription at all** — no ghost

@@ -274,6 +274,18 @@ describe('linked history', () => {
     expect(built?.drafts[0]?.lastSummary).toContain('50');
     expect(built?.drafts[0]?.sets[0]?.ghostWeight).toBeGreaterThanOrEqual(50);
   });
+
+  it('per-set targets and stuck detection read across linked rows', async () => {
+    await db.exercises.add(ex('copy', 'Row', 'g2', { historyIds: ['orig'] }));
+    // Two sessions under the old row, the latest under the new one — one
+    // timeline for the coach. 10,10,8 → 10,10,9 at the same weight.
+    await logSession('s1', '2026-05-01', 'orig', 'Row', 50, [10, 9, 8]);
+    await logSession('s2', '2026-05-08', 'orig', 'Row', 50, [10, 10, 7]);
+    await logSession('s3', '2026-05-15', 'copy', 'Row', 50, [10, 10, 8]);
+    const d = (await buildDraftFromWorkout('w2'))?.drafts[0];
+    expect(d?.sets.map((x) => x.ghostReps)).toEqual([10, 10, 9]);
+    expect(d?.prescription?.kind).toBe('add-rep');
+  });
 });
 
 describe('session-only removal survives a draft restore', () => {

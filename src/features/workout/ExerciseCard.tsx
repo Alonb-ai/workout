@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { SetRow } from './SetRow';
 import { PlateCalcModal } from './PlateCalcModal';
 import type { DraftExercise, DraftSet } from './types';
-import type { Prescription, ProgressionKind } from '@/utils/progression';
+import { formatSetReps, type Prescription, type ProgressionKind } from '@/utils/progression';
 import {
   IconChart,
   IconDots,
@@ -30,6 +30,7 @@ import { db } from '@/db/db';
  */
 const PRESCRIPTION_STYLE: Record<ProgressionKind, { rule: string; tint: string; text: string }> = {
   increase: { rule: 'bg-good', tint: 'bg-good/[0.06]', text: 'text-good' },
+  break: { rule: 'bg-good', tint: 'bg-good/[0.06]', text: 'text-good' },
   'add-rep': { rule: 'bg-accent', tint: 'bg-accent/[0.07]', text: 'text-accent-text' },
   hold: { rule: 'bg-info', tint: 'bg-info/[0.06]', text: 'text-info' },
   deload: { rule: 'bg-warn', tint: 'bg-warn/[0.07]', text: 'text-warn' },
@@ -38,6 +39,7 @@ const PRESCRIPTION_STYLE: Record<ProgressionKind, { rule: string; tint: string; 
 
 const KIND_LABEL: Record<ProgressionKind, string> = {
   increase: 'העלאת משקל',
+  break: 'פריצת תקיעה',
   'add-rep': 'עוד חזרה',
   hold: 'החזק',
   deload: 'דה-לוד',
@@ -87,7 +89,8 @@ function PrescriptionStrip({
 }) {
   const style = PRESCRIPTION_STYLE[prescription.kind];
   const delta = prescription.weight - prescription.fromWeight;
-  const showDelta = prescription.kind === 'increase' || prescription.kind === 'deload';
+  const showDelta =
+    prescription.kind === 'increase' || prescription.kind === 'break' || prescription.kind === 'deload';
 
   return (
     <div className={cn('relative flex items-center gap-3 px-3 py-2.5', style.tint)}>
@@ -113,7 +116,7 @@ function PrescriptionStrip({
                 <span className="text-fg-ghost">×</span>
               </>
             )}
-            <span className="num-display text-xl leading-none">{prescription.reps}</span>
+            <span className="num-display text-xl leading-none">{formatSetReps(prescription)}</span>
             <span className="text-2xs text-fg-muted">חזרות</span>
           </p>
         ) : (
