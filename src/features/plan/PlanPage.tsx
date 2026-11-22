@@ -8,6 +8,7 @@ import {
   IconEdit,
   IconGrip,
   IconList,
+  IconMove,
   IconPlus,
   IconTrash,
 } from '@/components/Icon';
@@ -20,6 +21,15 @@ import { confirmDialog } from '@/components/Confirm';
 import { cn } from '@/utils/cn';
 import type { Plan, Workout, MuscleGroup, Exercise } from '@/types';
 import { draftHasWork } from '@/db/queries';
+import {
+  historyIdsOf,
+  isLive,
+  removeExerciseFromPlan,
+  retireExercises,
+} from '@/db/exerciseLibrary';
+import { ExerciseLibrary } from './ExerciseLibrary';
+import { PlaceExerciseModal } from './PlaceExerciseModal';
+import { MuscleChips } from './MuscleChips';
 import {
   DndContext,
   PointerSensor,
@@ -70,6 +80,16 @@ async function deleteEmptyDrafts(workoutIds: string[]): Promise<void> {
     .filter((d): d is NonNullable<typeof d> => !!d && !draftHasWork(d))
     .map((d) => d.workoutId);
   if (empty.length > 0) await db.workoutDrafts.bulkDelete(empty);
+}
+
+/**
+ * Archive (history) or delete (no history) every live exercise of a workout.
+ * Runs inside the caller's transaction, before its muscle groups are deleted.
+ */
+async function retireWorkoutExercises(workoutId: string): Promise<void> {
+  const gs = await db.muscleGroups.where('workoutId').equals(workoutId).toArray();
+  const exs = await db.exercises.where('muscleGroupId').anyOf(gs.map((g) => g.id)).toArray();
+  await retireExercises(exs.filter(isLive).map((e) => e.id));
 }
 
 export function PlanPage() {
@@ -131,12 +151,18 @@ export function PlanPage() {
           for (const g of groups) {
             const newGid = newId();
             await db.muscleGroups.add({ ...g, id: newGid, workoutId: newWid });
-            const exs = await db.exercises.where('muscleGroupId').equals(g.id).toArray();
+            const exs = (await db.exercises.where('muscleGroupId').equals(g.id).toArray()).filter(
+              isLive,
+            );
             for (const e of exs) {
+              // The copy is a new row, but it is the same lift: it reads the
+              // original's logs as its own history, so progression continues
+              // instead of starting from zero in the new plan.
               await db.exercises.add({
                 ...e,
                 id: newId(),
                 muscleGroupId: newGid,
+                historyIds: historyIdsOf(e),
                 createdAt: t,
                 updatedAt: t,
               });
@@ -154,7 +180,7 @@ export function PlanPage() {
     const ok = await confirmDialog({
       title: `למחוק את "${p.name}"?`,
       body:
-        'הפעולה תמחק את התכנית ואת כל האימונים שלה. אימונים שכבר נשמרו לא יושפעו.' +
+        'הפעולה תמחק את התכנית ואת כל האימונים שלה. אימונים שכבר נשמרו לא יושפעו, ותרגילים עם היסטוריה יעברו לספריית התרגילים.' +
         (unsaved > 0
           ? ` יש אימון פתוח עם ${unsaved} סטים שטרם נשמרו — הוא יישאר במסך הבית לשמירה.`
           : ''),
@@ -164,14 +190,11 @@ export function PlanPage() {
     if (!ok) return;
     await db.transaction(
       'rw',
-      [db.plans, db.workouts, db.muscleGroups, db.exercises, db.workoutDrafts],
+      [db.plans, db.workouts, db.muscleGroups, db.exercises, db.exerciseLogs, db.workoutDrafts],
       async () => {
         const ws = await db.workouts.where('planId').equals(p.id).toArray();
         for (const w of ws) {
-          const gs = await db.muscleGroups.where('workoutId').equals(w.id).toArray();
-          for (const g of gs) {
-            await db.exercises.where('muscleGroupId').equals(g.id).delete();
-          }
+          await retireWorkoutExercises(w.id);
           await db.muscleGroups.where('workoutId').equals(w.id).delete();
         }
         await deleteEmptyDrafts(ws.map((w) => w.id));
@@ -352,6 +375,8 @@ export function PlanPage() {
               </DndContext>
             )}
           </Section>
+
+          <ExerciseLibrary planId={planId} />
         </>
       )}
 
@@ -490,7 +515,7 @@ function SortableWorkoutCard({ workout }: { workout: Workout }) {
             const ok = await confirmDialog({
               title: `למחוק "${workout.name}"?`,
               body:
-                'יימחקו גם קבוצות השרירים והתרגילים שמתחת לאימון זה.' +
+                'יימחקו גם קבוצות השרירים שמתחת לאימון זה. תרגילים עם היסטוריה יעברו לספריית התרגילים, עם כל ההתקדמות שלהם.' +
                 (unsaved > 0
                   ? ` יש כאן אימון פתוח עם ${unsaved} סטים שטרם נשמרו — הוא יישאר במסך הבית לשמירה.`
                   : ''),
@@ -500,12 +525,9 @@ function SortableWorkoutCard({ workout }: { workout: Workout }) {
             if (!ok) return;
             await db.transaction(
               'rw',
-              [db.workouts, db.muscleGroups, db.exercises, db.workoutDrafts],
+              [db.workouts, db.muscleGroups, db.exercises, db.exerciseLogs, db.workoutDrafts],
               async () => {
-                const gs = await db.muscleGroups.where('workoutId').equals(workout.id).toArray();
-                for (const g of gs) {
-                  await db.exercises.where('muscleGroupId').equals(g.id).delete();
-                }
+                await retireWorkoutExercises(workout.id);
                 await db.muscleGroups.where('workoutId').equals(workout.id).delete();
                 await deleteEmptyDrafts([workout.id]);
                 await db.workouts.delete(workout.id);
@@ -640,7 +662,8 @@ function MuscleGroupCard({ group }: { group: MuscleGroup }) {
     opacity: isDragging ? 0.6 : 1,
   };
   const exercises = useLiveQuery(
-    () => db.exercises.where('muscleGroupId').equals(group.id).sortBy('order'),
+    async () =>
+      (await db.exercises.where('muscleGroupId').equals(group.id).sortBy('order')).filter(isLive),
     [group.id],
   ) ?? [];
   const [editName, setEditName] = useState(group.name);
@@ -738,15 +761,22 @@ function MuscleGroupCard({ group }: { group: MuscleGroup }) {
           onClick={async () => {
             const ok = await confirmDialog({
               title: `למחוק "${group.name}"?`,
-              body: 'יימחקו גם התרגילים מתחתיה.',
+              body: 'תרגילים עם היסטוריה יעברו לספריית התרגילים, עם כל ההתקדמות שלהם. תרגילים ריקים יימחקו.',
               destructive: true,
               confirmLabel: 'מחק',
             });
             if (!ok) return;
-            await db.transaction('rw', [db.muscleGroups, db.exercises], async () => {
-              await db.exercises.where('muscleGroupId').equals(group.id).delete();
-              await db.muscleGroups.delete(group.id);
-            });
+            await db.transaction(
+              'rw',
+              [db.muscleGroups, db.exercises, db.workouts, db.exerciseLogs, db.workoutDrafts],
+              async () => {
+                const ids = (await db.exercises.where('muscleGroupId').equals(group.id).toArray())
+                  .filter(isLive)
+                  .map((e) => e.id);
+                await retireExercises(ids);
+                await db.muscleGroups.delete(group.id);
+              },
+            );
           }}
         >
           <IconTrash size={14} />
@@ -782,6 +812,7 @@ function ExerciseRow({ ex }: { ex: Exercise }) {
     opacity: isDragging ? 0.6 : 1,
   };
   const [editOpen, setEditOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
   const [draft, setDraft] = useState(ex);
 
   return (
@@ -816,16 +847,24 @@ function ExerciseRow({ ex }: { ex: Exercise }) {
           <IconEdit size={15} />
         </button>
         <button
+          className="btn-icon text-fg-dim hover:text-fg"
+          aria-label="העבר תרגיל"
+          onClick={() => setMoveOpen(true)}
+        >
+          <IconMove size={15} />
+        </button>
+        <button
           className="btn-icon text-fg-ghost hover:text-bad"
-          aria-label="מחק תרגיל"
+          aria-label="הסר תרגיל"
           onClick={async () => {
             const ok = await confirmDialog({
-              title: `למחוק את "${ex.name}"?`,
-              destructive: true,
-              confirmLabel: 'מחק',
+              title: `להוציא את "${ex.name}" מהתכנית?`,
+              body: 'הוא לא ייטען יותר לאימונים. אם יש לו היסטוריה — הוא עובר לספריית התרגילים עם כל ההתקדמות, ואפשר להחזיר אותו בכל רגע.',
+              confirmLabel: 'הוצא',
             });
             if (!ok) return;
-            await db.exercises.delete(ex.id);
+            const res = await removeExerciseFromPlan(ex.id);
+            toast.success(res === 'archived' ? 'הועבר לספריית התרגילים' : 'התרגיל הוסר');
           }}
         >
           <IconTrash size={15} />
@@ -885,6 +924,7 @@ function ExerciseRow({ ex }: { ex: Exercise }) {
                   barWeight: draft.barWeight,
                   isMachine: draft.isMachine ?? false,
                   incrementKg: draft.incrementKg,
+                  muscles: draft.muscles && draft.muscles.length > 0 ? draft.muscles : undefined,
                   ...(draft.notes ? { notes: draft.notes } : { notes: '' }),
                   updatedAt: now(),
                 });
@@ -1000,18 +1040,25 @@ function ExerciseRow({ ex }: { ex: Exercise }) {
             </div>
           </div>
           <div>
-            <label className="label">הערות</label>
+            <label className="label">הערה קבועה</label>
             <textarea
               className="input min-h-20"
+              placeholder="גובה כיסא, אחיזה, הגדרות מכונה… מופיעה על התרגיל בכל אימון"
               value={draft.notes ?? ''}
               onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
             />
           </div>
+          <MuscleChips
+            exercise={draft}
+            onChange={(muscles) => setDraft({ ...draft, muscles })}
+          />
           <p className="text-2xs text-fg-muted">
             תזכורת: המשקלים נשמרים נטו. שדה המוט משמש רק לחישוב הפלטות.
           </p>
         </div>
       </Modal>
+
+      <PlaceExerciseModal exercise={ex} open={moveOpen} onClose={() => setMoveOpen(false)} />
     </li>
   );
 }

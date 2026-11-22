@@ -55,7 +55,9 @@ export function statsForExercise(
     topReps: topRepsForTopWeight,
     volume: totalVolume(completed),
     est1RM: bestEst1RM(completed),
-    completedSets: completed.length,
+    // A drop set is extra work on a set already counted — it adds volume but
+    // must not push completion past 100% or count as a planned set.
+    completedSets: completed.filter((s) => !s.isDrop).length,
     plannedSets,
   };
 }

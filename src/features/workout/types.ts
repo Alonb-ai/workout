@@ -8,6 +8,13 @@ export interface DraftSet {
   reps: number | '';
   rpe?: number | '';
   completed: boolean;
+  /**
+   * Epoch ms the set was ticked off. Drives the workout clock only; it is not
+   * copied into the saved SetLog. Absent on drafts made before it existed.
+   */
+  completedAt?: number;
+  /** Drop set hanging off the set before it. See SetLog.isDrop. */
+  isDrop?: boolean;
   /** Snapshot from last session for ghost-text and comparisons. */
   ghostWeight?: number;
   ghostReps?: number;
@@ -25,7 +32,14 @@ export interface DraftExercise {
   barWeight: number;
   isMachine: boolean;
   defaultRestSec: number;
+  /** Display copy of the exercise's pinned note (`Exercise.notes`). */
   notes?: string;
+  /** Note for this session only; saved to `ExerciseLog.notes`. */
+  sessionNote?: string;
+  /** The most recent session note for this exercise, shown as a reminder. */
+  lastNote?: { text: string; date: ISODate };
+  /** See Exercise.supersetGroup. */
+  supersetGroup?: string;
   seedWeight?: number;
   /** Per-exercise loading step; see Exercise.incrementKg. */
   incrementKg?: number;
@@ -54,6 +68,12 @@ export interface WorkoutDraft {
   drafts: DraftExercise[];
   sessionDate: ISODate;
   notes: string;
+  /**
+   * Plan exercises taken out of THIS session only (removed or swapped for
+   * something else). Without it, restoring the draft would re-append them as
+   * "exercises added to the plan since". Optional: older drafts lack it.
+   */
+  removedExerciseIds?: ID[];
   startedAt: Timestamp;
   updatedAt: Timestamp;
 }

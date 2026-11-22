@@ -5,7 +5,19 @@ import { db, newId, now } from '@/db/db';
 import { todayISO } from '@/utils/dates';
 import { format } from 'date-fns';
 import { toast } from '@/store/toast';
-import type { BodyMeasurement } from '@/types';
+import { IconPlus, IconX } from '@/components/Icon';
+import { compressImage } from '@/utils/image';
+import type { BodyMeasurement, PhotoPose, ProgressPhoto } from '@/types';
+import { CIRCUMFERENCES, CIRCUMFERENCE_RANGE, POSES, type CircumferenceKey } from './bodyMetrics';
+
+type CircState = Record<CircumferenceKey, number | ''>;
+const circFrom = (m?: BodyMeasurement): CircState => ({
+  waistCm: m?.waistCm ?? '',
+  chestCm: m?.chestCm ?? '',
+  armCm: m?.armCm ?? '',
+  thighCm: m?.thighCm ?? '',
+  hipsCm: m?.hipsCm ?? '',
+});
 
 interface Props {
   open: boolean;
@@ -25,6 +37,9 @@ export function MeasurementModal({ open, onClose, editing }: Props) {
   const [fatPct, setFatPct] = useState<number | ''>(editing?.fatPct ?? '');
   const [muscleMass, setMuscleMass] = useState<number | ''>(editing?.muscleMass ?? '');
   const [notes, setNotes] = useState(editing?.notes ?? '');
+  const [circ, setCirc] = useState<CircState>(circFrom(editing));
+  const [photos, setPhotos] = useState<ProgressPhoto[]>(editing?.photos ?? []);
+  const [busyPose, setBusyPose] = useState<PhotoPose | null>(null);
 
   // Reset when the modal opens for a different row (or fresh insert).
   useEffect(() => {
@@ -34,7 +49,26 @@ export function MeasurementModal({ open, onClose, editing }: Props) {
     setFatPct(editing?.fatPct ?? '');
     setMuscleMass(editing?.muscleMass ?? '');
     setNotes(editing?.notes ?? '');
+    setCirc(circFrom(editing));
+    setPhotos(editing?.photos ?? []);
+    setBusyPose(null);
   }, [open, editing]);
+
+  const onPick = async (pose: PhotoPose, file: File | undefined) => {
+    if (!file) return;
+    setBusyPose(pose);
+    try {
+      const dataUrl = await compressImage(file);
+      setPhotos((cur) => [
+        ...cur.filter((p) => p.pose !== pose),
+        { id: newId(), pose, dataUrl },
+      ]);
+    } catch (err) {
+      toast.warn(err instanceof Error ? err.message : 'לא ניתן לטעון את התמונה');
+    } finally {
+      setBusyPose(null);
+    }
+  };
 
   /**
    * Range checks live here, not as `min`/`max` on the inputs. NumberInput
@@ -61,6 +95,21 @@ export function MeasurementModal({ open, onClose, editing }: Props) {
       toast.warn('מסת שריר חייבת להיות בין 10 ל-150 ק״ג');
       return;
     }
+    const circOut: Partial<Record<CircumferenceKey, number>> = {};
+    for (const c of CIRCUMFERENCES) {
+      const v = num(circ[c.key]);
+      if (v === undefined) continue;
+      const [lo, hi] = CIRCUMFERENCE_RANGE[c.key];
+      if (v < lo || v > hi) {
+        toast.warn(`היקף ${c.label} חייב להיות בין ${lo} ל-${hi} ס״מ`);
+        return;
+      }
+      circOut[c.key] = v;
+    }
+    if (busyPose) {
+      toast.warn('התמונה עדיין בעיבוד');
+      return;
+    }
     const t = now();
     const row: BodyMeasurement = {
       id: editing?.id ?? newId(),
@@ -68,6 +117,8 @@ export function MeasurementModal({ open, onClose, editing }: Props) {
       bodyWeight: Number(bodyWeight),
       ...(fatPct !== '' ? { fatPct: Number(fatPct) } : {}),
       ...(muscleMass !== '' ? { muscleMass: Number(muscleMass) } : {}),
+      ...circOut,
+      ...(photos.length > 0 ? { photos: POSES.flatMap((p) => photos.filter((x) => x.pose === p.key)) } : {}),
       ...(notes.trim() ? { notes: notes.trim() } : {}),
       createdAt: editing?.createdAt ?? t,
       updatedAt: t,
@@ -154,6 +205,78 @@ export function MeasurementModal({ open, onClose, editing }: Props) {
           </div>
           <p className="text-2xs text-fg-dim mt-2">
             ימים שאין לך את אלה — רק משקל מספיק.
+          </p>
+        </div>
+
+        <div>
+          <p className="eyebrow mb-2">היקפים (ס״מ) · אופציונלי</p>
+          <div className="grid grid-cols-2 gap-3">
+            {CIRCUMFERENCES.map((c) => (
+              <div key={c.key}>
+                <label className="label">{c.label}</label>
+                <NumberInput
+                  ariaLabel={`היקף ${c.label} (ס״מ)`}
+                  value={circ[c.key]}
+                  onChange={(v) => setCirc((cur) => ({ ...cur, [c.key]: v }))}
+                  decimals={1}
+                  step={0.5}
+                  placeholder={c.hint}
+                  suffix="cm"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <p className="eyebrow mb-2">תמונות התקדמות · אופציונלי</p>
+          <div className="grid grid-cols-3 gap-2">
+            {POSES.map((pose) => {
+              const photo = photos.find((p) => p.pose === pose.key);
+              return (
+                <div key={pose.key} className="relative">
+                  <label
+                    className="field aspect-[3/4] rounded-xl overflow-hidden flex flex-col items-center justify-center gap-1 cursor-pointer text-fg-dim"
+                    aria-label={`תמונת ${pose.label}`}
+                  >
+                    {photo ? (
+                      <img src={photo.dataUrl} alt={`תמונת ${pose.label}`} className="w-full h-full object-cover" />
+                    ) : busyPose === pose.key ? (
+                      <span className="text-2xs">מעבד…</span>
+                    ) : (
+                      <>
+                        <IconPlus size={18} />
+                        <span className="text-2xs">{pose.label}</span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="sr-only"
+                      onChange={(e) => {
+                        void onPick(pose.key, e.target.files?.[0]);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                  {photo && (
+                    <button
+                      type="button"
+                      className="absolute top-0 end-0 w-11 h-11 flex items-start justify-end p-1"
+                      aria-label={`הסר תמונת ${pose.label}`}
+                      onClick={() => setPhotos((cur) => cur.filter((p) => p.pose !== pose.key))}
+                    >
+                      <span className="w-7 h-7 rounded-full bg-ink-950/80 text-fg flex items-center justify-center">
+                        <IconX size={14} />
+                      </span>
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-2xs text-fg-dim mt-2">
+            התמונות נשמרות רק במכשיר ובקובץ הגיבוי. אותה תאורה ואותה תנוחה כל פעם — כך ההשוואה אמינה.
           </p>
         </div>
 

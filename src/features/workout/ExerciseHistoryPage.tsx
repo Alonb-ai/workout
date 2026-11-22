@@ -1,4 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks';
+import { isUserNote } from './buildSession';
 import { Link, useParams } from 'react-router-dom';
 import { db } from '@/db/db';
 import { Section } from '@/components/Section';
@@ -7,13 +8,17 @@ import { IconArrowRight, IconChart, IconTrophy, IconWarn } from '@/components/Ic
 import { getExerciseHistory, getLatestBodyMeasurement } from '@/db/queries';
 import { statsForExercise, compareToPrevious } from '@/utils/scoring';
 import { detectStall } from '@/utils/stall';
-import { computeProgressionRate, suggestDeload, findSubstitutes } from '@/utils/insights';
+import { computeProgressionRate, findSubstitutes } from '@/utils/insights';
+import { deloadOf, pastSetsFromLogs, prescriptionForExercise } from '@/utils/progression';
 import {
   matchStrengthLift,
   assessStrength,
   STRENGTH_LEVEL_LABELS,
 } from '@/utils/benchmarks';
 import { useSettings } from '@/hooks/useSettings';
+import { unlinkHistory } from '@/db/exerciseLibrary';
+import { confirmDialog } from '@/components/Confirm';
+import { toast } from '@/store/toast';
 import { formatHebDate, formatHM } from '@/utils/dates';
 import { format, parseISO } from 'date-fns';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from 'recharts';
@@ -120,6 +125,10 @@ export function ExerciseHistoryPage() {
     [exerciseId],
   );
   const allExercises = useLiveQuery(() => db.exercises.toArray(), []);
+  const groupNameById = useLiveQuery(
+    async () => new Map((await db.muscleGroups.toArray()).map((g) => [g.id, g.name])),
+    [],
+  );
   const settings = useSettings();
   const latestBody = useLiveQuery(() => getLatestBodyMeasurement(), []);
 
@@ -142,8 +151,24 @@ export function ExerciseHistoryPage() {
   );
   const stall = detectStall(stats, exercise.name);
   const progression = computeProgressionRate(stats);
-  const deload = stall ? suggestDeload(stats) : null;
-  const subs = stall ? findSubstitutes(exercise.id, allExercises ?? [], 3) : [];
+  // Same coach as the logger, so this page never contradicts today's target.
+  const deload = stall
+    ? deloadOf(
+        prescriptionForExercise(
+          exercise,
+          safeHistory.map((h) =>
+            pastSetsFromLogs([...h.sets].sort((a, b) => a.setNumber - b.setNumber)),
+          ),
+          settings.plateInventory,
+        ),
+      )
+    : null;
+  const subs = stall ? findSubstitutes(exercise.id, allExercises ?? [], 3, groupNameById) : [];
+  const exById = new Map((allExercises ?? []).map((e) => [e.id, e]));
+  const linked = (exercise.historyIds ?? [])
+    .map((id) => exById.get(id))
+    .filter((e): e is NonNullable<typeof e> => !!e && e.mergedInto === exercise.id);
+  const mergedTarget = exercise.mergedInto ? exById.get(exercise.mergedInto) : undefined;
 
   // Strength-standard benchmark — only for the big lifts and only when we have
   // both a current bodyweight and the user's sex on file.
@@ -176,6 +201,46 @@ export function ExerciseHistoryPage() {
       <header className="mb-4">
         <p className="eyebrow">תרגיל</p>
         <h1 className="text-2xl font-extrabold tracking-tight">{exercise.name}</h1>
+        {exercise.archivedAt !== undefined && !mergedTarget && (
+          <p className="mt-1 inline-flex chip border-line text-fg-dim">
+            בספריית התרגילים · לא בתכנית
+          </p>
+        )}
+        {mergedTarget && (
+          <p className="mt-1 text-xs text-fg-muted">
+            ההיסטוריה של התרגיל הזה מקושרת ל־
+            <Link className="text-accent-text underline" to={`/workout/exercise/${mergedTarget.id}/history`}>
+              {mergedTarget.name}
+            </Link>
+          </p>
+        )}
+        {linked.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-2xs text-fg-dim">כולל היסטוריה של:</span>
+            {linked.map((l) => (
+              <span key={l.id} className="chip border-line text-fg-muted gap-1">
+                {l.name}
+                <button
+                  type="button"
+                  className="text-fg-ghost hover:text-bad"
+                  aria-label={`בטל קישור · ${l.name}`}
+                  onClick={async () => {
+                    const ok = await confirmDialog({
+                      title: `לבטל את הקישור ל"${l.name}"?`,
+                      body: `${l.name} יחזור לספריית התרגילים עם ההיסטוריה שלו.`,
+                      confirmLabel: 'בטל קישור',
+                    });
+                    if (!ok) return;
+                    await unlinkHistory(exercise.id, l.id);
+                    toast.success('הקישור בוטל');
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <p className="text-2xs text-fg-muted mt-1">
           יעד: {exercise.targetSets}×{exercise.targetRepsMin}-{exercise.targetRepsMax} ·
           מנוחה {formatHM(exercise.defaultRestSec)}
@@ -363,6 +428,10 @@ export function ExerciseHistoryPage() {
                         <p className="text-2xs text-fg-dim">
                           יעד {h.exerciseLog.targetSets}×{h.exerciseLog.targetRepsMin}-
                           {h.exerciseLog.targetRepsMax}
+                          {/* Logged under another name (renamed since, or linked
+                              history) — say so, the numbers may be a different lift. */}
+                          {h.exerciseLog.exerciseName !== exercise.name &&
+                            ` · נרשם כ: ${h.exerciseLog.exerciseName}`}
                         </p>
                       </div>
                       <span
@@ -378,13 +447,20 @@ export function ExerciseHistoryPage() {
                         <Mini label="נפח" value={`${cur.volume.toLocaleString('he-IL')}kg`} />
                         <Mini label="1RM" value={`${cur.est1RM.toFixed(1)}`} />
                       </div>
+                      {isUserNote(h.exerciseLog.notes, exercise.notes) && (
+                        <p className="field mt-1.5 px-2.5 py-1.5 rounded-lg text-xs text-fg-muted whitespace-pre-wrap">
+                          {h.exerciseLog.notes}
+                        </p>
+                      )}
                       <div className="mt-1.5 grid grid-cols-2 gap-1.5">
                         {h.sets.map((s) => (
                           <div
                             key={s.id}
                             className="field flex items-center justify-between px-2 py-1 rounded-lg"
                           >
-                            <span className="num text-2xs text-fg-dim">סט {s.setNumber}</span>
+                            <span className="num text-2xs text-fg-dim">
+                              {s.isDrop ? 'דרופ' : `סט ${s.setNumber}`}
+                            </span>
                             <span className="num-display text-xs">
                               {s.weight}kg × {s.reps}
                             </span>

@@ -19,6 +19,7 @@ import {
 import { formatHebDate, formatHebDateFull, todayISO } from '@/utils/dates';
 import { daysSinceLastWorkout } from '@/utils/dates';
 import { commitDraft } from '../workout/buildSession';
+import { isDraftStale } from '../workout/unsavedWorkoutPlan';
 import { getLatestBodyMeasurement } from '@/db/queries';
 import { toast } from '@/store/toast';
 import { useStallFlags } from './useStallFlags';
@@ -28,6 +29,7 @@ import { motion } from 'framer-motion';
 import { format, differenceInDays, parseISO, startOfMonth } from 'date-fns';
 import { updateSettings } from '@/hooks/useSettings';
 import { useSettings } from '@/hooks/useSettings';
+import { isNativeApp } from '@/native/platform';
 
 export function DashboardPage() {
   const today = todayISO();
@@ -100,6 +102,7 @@ export function DashboardPage() {
     if (!lastByWorkout.has(s.workoutId)) lastByWorkout.set(s.workoutId, s.date);
   }
   const nextWorkout = (workouts ?? [])
+    .filter((w) => !w.isFreestyle)
     .map((w) => ({ w, lastDate: lastByWorkout.get(w.id) ?? '' }))
     .sort((a, b) => {
       if (a.lastDate === b.lastDate) return a.w.order - b.w.order;
@@ -133,6 +136,22 @@ export function DashboardPage() {
         </button>
       </header>
 
+      {/* First run of the iOS app: its storage is separate from the home-screen
+          web app's, so the history has to be carried over by file. Disappears
+          as soon as there is one saved session. */}
+      {isNativeApp() && completedSessions && completedSessions.length === 0 && (
+        <Link
+          to="/settings"
+          className="card relative mb-5 block overflow-hidden p-3 ps-4 bg-accent/[0.06]"
+        >
+          <span className="absolute inset-y-0 start-0 w-[3px] bg-accent" aria-hidden />
+          <p className="text-sm font-semibold">יש לך היסטוריה באפליקציה הישנה?</p>
+          <p className="text-2xs text-fg-muted mt-1 leading-relaxed">
+            ייצא גיבוי מהאפליקציה שבמסך הבית וייבא אותו כאן בהגדרות ← גיבוי ונתונים.
+          </p>
+        </Link>
+      )}
+
       {/* In-progress drafts. A draft dated before today is a workout the user
           logged and forgot to save — it gets a one-tap rescue instead of a
           "continue editing" link, because forgetting to save is the single
@@ -150,7 +169,10 @@ export function DashboardPage() {
               (s, ex) => s + ex.sets.filter((x) => x.completed).length,
               0,
             );
-            const forgotten = d.sessionDate < today && doneSets > 0;
+            // Also "forgotten": today's workout that has sat untouched for hours
+            // with sets logged — the save button was almost certainly missed.
+            const stale = d.sessionDate >= today && isDraftStale(d, Date.now());
+            const forgotten = (d.sessionDate < today && doneSets > 0) || stale;
 
             if (forgotten) {
               return (
@@ -168,7 +190,10 @@ export function DashboardPage() {
                       </p>
                       <p className="font-bold truncate text-sm">{d.workoutName}</p>
                       <p className="text-2xs text-fg-muted num">
-                        {formatHebDate(d.sessionDate)} · {doneSets}/{totalSets} סטים
+                        {stale
+                          ? `נערך לאחרונה ${format(new Date(d.updatedAt), 'HH:mm')}`
+                          : formatHebDate(d.sessionDate)}{' '}
+                        · {doneSets}/{totalSets} סטים
                       </p>
                     </div>
                   </div>
@@ -273,7 +298,14 @@ export function DashboardPage() {
       )}
 
       {/* Quick stats */}
-      <Section title="סטטיסטיקות">
+      <Section
+        title="סטטיסטיקות"
+        action={
+          <Link to="/progress/week" className="text-xs text-accent-text font-semibold">
+            סיכום שבועי ←
+          </Link>
+        }
+      >
         <div className="grid grid-cols-2 gap-2">
           <Stat
             icon={<IconFlame className="text-accent" />}

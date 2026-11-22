@@ -51,7 +51,9 @@ src/
 v1 initial · v2 push fields · v3 `workoutDrafts` · v4 `bodyMeasurements` + profile ·
 **v5 backfills `barWeight` on barbell lifts** (`inferBarWeight` in `db/db.ts` — it
 returns `null` for "leave alone" and only names it is sure about get a bar, since
-a wrong bar weight makes the plate calculator state the wrong load).
+a wrong bar weight makes the plate calculator state the wrong load) ·
+**v6 re-attaches orphaned logs** (`repairExerciseLinks` in `db/repair.ts`; also run after
+every import, so a pre-v6 backup restored on iOS is repaired too).
 
 ### Dexie entities
 
@@ -60,7 +62,7 @@ a wrong bar weight makes the plate calculator state the wrong load).
 | `plans`        | `id`        | `isActive` (single active expected), `order`                        |
 | `workouts`     | `id`        | `planId`, `code` (e.g. `UA`), `order`                               |
 | `muscleGroups` | `id`        | `workoutId`, `order`                                                |
-| `exercises`    | `id`        | `muscleGroupId`, `barWeight`, `isMachine`, `seedWeight`             |
+| `exercises`    | `id`        | `muscleGroupId`, `barWeight`, `isMachine`, `seedWeight`, `archivedAt`, `historyIds`, `mergedInto`, `muscles` |
 | `sessions`     | `id`        | `workoutId`, `planId`, `date`, `status`, `score`, `totalVolume`     |
 | `exerciseLogs` | `id`        | `sessionId`, `exerciseId`, **snapshots** of name/target/barWeight   |
 | `setLogs`      | `id`        | `exerciseLogId`, `sessionId`, `exerciseId`, `setNumber`, `completed` |
@@ -90,9 +92,11 @@ a wrong bar weight makes the plate calculator state the wrong load).
    - **Inputs commit on every keystroke**, not on blur (`NumberInput`). iOS's decimal keypad
      has no Return key and backgrounding fires no blur, so blur-only commits meant the flush
      wrote a draft missing the number the user had just typed.
-   - **A draft containing completed sets is never auto-deleted, at any age.**
-     `purgeEmptyWorkoutDrafts` only removes drafts with nothing logged. Drafts dated before
-     today are surfaced on the dashboard as "אימון שלא נשמר" with a one-tap `commitDraft`.
+   - **A draft containing ANY logged work (completed sets, typed weight/reps, or notes) is
+     never auto-deleted, at any age.** `purgeEmptyWorkoutDrafts` (via `draftHasWork`) only
+     removes drafts with nothing entered. Drafts dated before today with completed sets are
+     surfaced on the dashboard as "אימון שלא נשמר" with a one-tap `commitDraft`; other drafts
+     show as "המשך טיוטה".
    - Export/import/wipe iterate `db.tables` rather than a hand-written list — every
      hand-listed version silently forgot a table added by a later `.version()`.
      `importAll` validates the payload **before** clearing anything.
@@ -112,20 +116,74 @@ a wrong bar weight makes the plate calculator state the wrong load).
 
 All this logic lives in `src/utils/scoring.ts` and `src/utils/stall.ts`. Run `npx tsx scripts/smoke.ts` after changing it.
 
+### Progress metrics (`src/utils/progressMetrics.ts`)
+
+The 0–100 score swings when one exercise is skipped, so the Progress screen leads
+with a **strength index** instead. The owner's definition of progress is weight ×
+reps per exercise; every figure compares an exercise only with **itself**.
+
+- **Measure per outing** = mean Epley across the completed sets at the top weight
+  (bodyweight: mean reps). 10/10/9 beats 10/10/8; a weight jump that costs ~2 reps
+  reads as level, which is what double progression should look like.
+- **Index over a window** = geometric mean across every exercise trained in the
+  window of (latest outing so far ÷ baseline), baseline = last outing before the
+  window, else first inside it. Skipped lifts hold their value, new lifts start at 1,
+  so the line can't jump from composition. Ratios clamp to 0.5–2.
+- **Per-session change** (`sessionChanges`) = geometric mean of each exercise vs its
+  own previous outing; shown in the journal as "כוח ±x%". Don't chain these into an
+  index: per-session geometric means don't telescope and drift upward.
+- Deleted exercises keep their trend row (snapshot name) but get no history link.
+- **AI analysis** is a share-sheet hand-off (`buildAnalysisPrompt` + `utils/shareText.ts`):
+  no API key, no server, nothing leaves the device until the user picks a target.
+  Owner chose this over an in-app API key (2026-11-22). Only training numbers go in.
+
+### Weekly summary (`src/utils/weeklySummary.ts`, route `/progress/week`)
+
+Sunday → Saturday week vs the week before: sessions, completed sets, volume,
+**sets per muscle** (snapshot `muscleGroupName`), PRs, stuck lifts, strength change.
+Built on `buildExerciseHistories`, so it agrees with the strength index.
+- **PR** needs history (a first outing is never one): heavier top weight →
+  `weight`; else mean-Epley measure > best prior by 0.5 % → `strength`
+  (bodyweight: `reps`).
+- **Stuck** = ≥ 3 outings in a row with no gain in top weight, volume or reps at
+  the top weight (same rule as `detectStall`), only for lifts trained that week.
+  Sorted by reps still missing before a weight increase.
+
+### Body tracking
+
+`BodyMeasurement` carries optional tape circumferences (`waistCm`, `chestCm`,
+`armCm`, `thighCm`, `hipsCm`) and `photos: ProgressPhoto[]` (≤ 1 per pose, JPEG data
+URLs downscaled to 1280 px by `utils/image.ts`). All non-indexed — **no Dexie
+bump** — and photos live inline so the JSON backup carries them. Circumference
+ranges are checked in the save handler (`CIRCUMFERENCE_RANGE`), never clamped.
+The iOS wrapper needs `NSCameraUsageDescription` in Info.plist or "Take Photo"
+from the file picker crashes the app.
+
 ## Progressive overload (the app's job, not the user's)
 
 `src/utils/progression.ts` decides **what to lift today** for each exercise. It is the
 difference between a logbook and a coach, so treat it as load-bearing.
 
-- **Double progression.** Hold the weight until every target set is completed at the
-  **top** of the rep range, then add one increment and drop back to the bottom.
-- **The weakest set at the top weight decides.** `8, 8, 7` in a 6–8 range has not earned
-  an increase. Warm-up sets below the top weight are ignored entirely.
+- **Per-set double progression.** Each set has its own target: hold the weight and ask
+  for one more rep on every set below the top of the range (`10,10,8` → `10,10,9`). A set
+  at or above the top keeps its count — a target never asks for fewer reps than last time,
+  and 3–4 reps never jump to the top of the range. `Prescription.setReps` carries the list
+  (optional only for drafts saved before it existed — read via `targetRepsForSet`).
+- **Working weight** = heaviest weight with a set inside the rep range (a single grinder
+  above it, e.g. `22×3` then `18×6,6,5`, is an attempt, not the working weight). Lighter
+  warm-ups are ignored; missing sets are padded with the weakest set at that weight.
+- **Increase** when every target set hit the top. New reps = Epley at the new weight
+  **minus one** (replay of the owner's history showed raw Epley overshoots by ~1),
+  clamped to `[repsMin, repsMax-1]`.
+- **Stuck** = last 3 sessions at the same weight, each with ≥ half the target sets there,
+  and none beat the first on total reps. Then: weakest set within 1 of the top → `break`
+  (heavier, fewer reps — the owner's own rule); else some set in range → step back ONE
+  increment; else ~10% deload. One rep from the top is never deloaded. The dashboard and
+  exercise page take their deload figure from the same `prescriptionForExercise`, so the
+  coach and the warnings never disagree.
 - **Increment** = `Exercise.incrementKg` if set → else 2.5 kg for machines → else the
   smallest **owned plate pair** (`smallestPairIncrement`, i.e. 2 × the smallest plate).
   `incrementKg` is an optional, non-indexed field: no Dexie migration needed to add it.
-- **Stall outranks hold.** A lift flagged by `detectStall` gets a deload prescription
-  instead of another identical session — holding is what caused the stall.
 - **0 kg means bodyweight**, and reps are the only progress signal there. Never let the
   engine turn a 0 kg top set into "load 2.5 kg".
 - **A first-ever session with no `seedWeight` has no prescription at all** — no ghost
@@ -137,6 +195,56 @@ strip at the top of each `ExerciseCard`, and is written into every set row as gh
 path is the primary way sets get logged, so don't break it. Anything typed always wins.
 
 Covered by `src/utils/progression.test.ts` and the E2E specs; run both after touching it.
+
+## Flexible plan — exercises are archived, never deleted with history
+
+`src/db/exerciseLibrary.ts` owns the exercise lifecycle; read it before touching plan edits.
+
+- **Removing an exercise from the plan archives it** (`archivedAt`, `archivedFrom`). The row
+  — and so its id, which every log points at — stays. Deleting a workout / muscle group /
+  plan calls `retireExercises`: rows with history (logs, an open draft, or linked history)
+  are archived, empty ones deleted. Archived rows still carry their old `muscleGroupId`;
+  code must tolerate that group being gone. **Every query that builds a lineup filters
+  `isLive`** (`buildDraftFromWorkout`, `reconcileDraftWithPlan`, plan editor, stall flags).
+- The plan screen's **"ספריית תרגילים"** lists archived rows: put back into a group
+  (`placeExercise`), link history into another exercise, or delete (only with no history).
+- **Linked history** (`historyIds`): an exercise reads other rows' logs as its own.
+  `getExerciseHistory` and progression use `historyIdsOf(ex)`. Linking is non-destructive
+  (no log is rewritten; `mergedInto` hides the source) and `unlinkHistory` reverses it.
+  Duplicating a plan links each copy to its original, so progression continues.
+- **Swap** (logger ⋯ → "החלף תרגיל"): session-only replaces the draft entry and records the
+  old id in `WorkoutDraft.removedExerciseIds` (so restore doesn't re-append it); "גם בתכנית"
+  is `swapInPlan` — new exercise takes the old one's group + order, old one is archived.
+  A swapped-away card that already holds completed sets is kept, never replaced.
+- **Add exercise** in a session is session-only by default; a newly invented one is
+  created archived (in the library) unless "להוסיף גם לתכנית" is ticked.
+- **Suggestions** (`src/utils/exerciseCatalog.ts`): muscles are guessed from the name +
+  group label (Hebrew & English regex rules; `\b` is ASCII-only, so Hebrew is bounded
+  with `(^|\s)…($|\s)`), overridable per exercise (`muscles`, chips in the plan edit
+  modal). `rankSimilar` scores same primary muscle highest. `EXERCISE_CATALOG` holds ~60
+  Hebrew exercises offered when the user has no good match.
+
+## Notes, warm-up, drop sets, supersets
+
+- **Two notes per exercise.** `Exercise.notes` is the *pinned* note (seat height, grip),
+  shown on the card every session and written straight to the exercise row on each
+  keystroke from `ExerciseNotesModal` — it never depends on the session being saved.
+  `DraftExercise.sessionNote` is today's note; it is stored as `ExerciseLog.notes` and
+  comes back next time as `DraftExercise.lastNote` (newest note in the last 3 sessions).
+  Old logs hold a *copy* of the pinned note or a marker like `[נוסף באימון בודד]`;
+  `isUserNote` filters those out. A fresh draft always has `sessionNote: ''` —
+  `undefined` means an old-format draft whose typed note still sits in `notes`
+  (`reconcileDraftWithPlan` and `saveSession` carry it over, never drop it).
+- **Warm-up** (`utils/warmup.ts`, `WarmupModal`) is a guide only: never logged. Percentages
+  are of the total load (net + bar), floored to the loading step, converted back to net.
+- **Drop sets** are `DraftSet.isDrop` / `SetLog.isDrop` rows right after their parent set.
+  They count toward volume but **not** toward planned/completed sets (`statsForExercise`,
+  `doneWorkSets`), and `pastSetsFromLogs` drops them so progression never reads them.
+  Ticking a set whose drop is still open does not start the rest timer.
+- **Supersets**: neighbouring exercises sharing `Exercise.supersetGroup` (non-indexed,
+  persisted when linked from the logger ⋯ menu). Membership is by adjacency
+  (`supersetRuns`). Rest starts only when every member has done the round, using the
+  longest member rest; until then a toast names the next exercise.
 
 ## Design system
 
@@ -222,6 +330,33 @@ the query return `?? null`: `undefined` = loading, `null` = missing.
 - **`PromiseExtended` vs `Promise`.** `useLiveQuery(() => cond ? db... : Promise.resolve([]), …)` produces an inferred type that confuses TS — always wrap with `useLiveQuery(async () => { if (!cond) return []; return db... })`.
 - **Dexie transactions.** Reads inside an `rw` transaction don't reliably reflect uncommitted writes from the same transaction in all browsers — when a save needs to read history (e.g. to compute PRs), do the reads *before* opening the transaction, then write inside it. See `features/workout/buildSession.ts`.
 - **No `prompt/confirm/alert`.** Already enforced by lint hygiene; reach for `Modal` + `confirmDialog` instead.
+
+## Native iOS app (Capacitor)
+
+The repo also builds an iOS app: `capacitor.config.ts` + `ios/` (Capacitor 8,
+SPM). Full build/TestFlight steps: `docs/ios.md`. `npm run ios:sync` = build +
+copy into Xcode project.
+
+- Native-only code lives in `src/native/` and is gated on `isNativeApp()`; the
+  web build and E2E must behave exactly as before.
+- Reminders in the app are iOS local notifications (`native/reminders.ts`,
+  planned by the pure `planReminders()`), not the in-app tick or web push.
+- Export uses the share sheet (`native/files.ts`); `<a download>` is a no-op in
+  WKWebView.
+- Rest timer: `native/restTimer.ts` mirrors `useTimerStore` to a Live Activity
+  (own plugin `ios/App/App/RestTimerPlugin.swift`, drawn by the
+  `RestTimerWidgetExtension` target) and to notification id 3000 at the end
+  time. Unsaved-workout nudges: `native/workoutReminders.ts`, timing in the pure
+  `features/workout/unsavedWorkoutPlan.ts` (2 h / 12 h after the draft's last
+  change). Local notifications are silent on iOS unless `sound` names a file in
+  `public/`. Build number lives on two targets: bump with `npm run ios:bump`.
+- Shortcuts actions "סיכום האימון האחרון" / "סיכום שבועי" (App Intents in
+  `ios/App/App/SummaryShortcuts.swift`) return text that the web layer renders
+  (`utils/summaryText.ts`) and stores in UserDefaults via the `SummaryStore`
+  plugin on every session change and app foreground — Swift can't read IndexedDB.
+- The app's IndexedDB is separate from the PWA's (different origin). Moving
+  data = export → import. Never tell the owner to delete the PWA before the app
+  shows the imported data.
 
 ## Adding a new screen / module
 

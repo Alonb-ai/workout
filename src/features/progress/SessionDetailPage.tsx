@@ -95,9 +95,16 @@ async function recomputeSession(sessionId: string): Promise<void> {
  * screen was tagging ירידה. A single user has hundreds of sessions at most, so
  * walking the tail is cheap and always right.
  */
-async function recomputeFrom(sessionId: string): Promise<void> {
-  const edited = await db.sessions.get(sessionId);
-  if (!edited) return;
+async function recomputeFrom(sessionId: string, oldDate?: string): Promise<void> {
+  const found = await db.sessions.get(sessionId);
+  if (!found) return;
+  // Moving a session later also changes the sessions it used to precede.
+  const edited =
+    oldDate && oldDate < found.date ? { date: oldDate, startedAt: 0 } : found;
+  await recomputeAfter(edited);
+}
+
+async function recomputeAfter(edited: { date: string; startedAt?: number }): Promise<void> {
   const isAfter = (s: { date: string; startedAt?: number }) =>
     s.date > edited.date ||
     (s.date === edited.date && (s.startedAt ?? 0) >= (edited.startedAt ?? 0));
@@ -155,6 +162,7 @@ export function SessionDetailPage() {
       await db.exerciseLogs.where('sessionId').equals(session.id).delete();
       await db.sessions.delete(session.id);
     });
+    await recomputeAfter({ date: session.date, startedAt: 0 });
     toast.success('האימון נמחק');
     navigate('/progress', { replace: true });
   };
@@ -309,8 +317,9 @@ export function SessionDetailPage() {
               className="btn-primary"
               onClick={async () => {
                 if (!dateDraft) return;
+                const oldDate = session.date;
                 await db.sessions.update(session.id, { date: dateDraft });
-                await recomputeFrom(session.id);
+                await recomputeFrom(session.id, oldDate);
                 toast.success('התאריך עודכן');
                 setDateEditOpen(false);
               }}
@@ -338,7 +347,7 @@ function ExerciseLogCard({
   sessionDate,
   onEditSet,
 }: {
-  log: { id: string; exerciseId: string; exerciseName: string; muscleGroupName: string; targetSets: number; targetRepsMin: number; targetRepsMax: number };
+  log: { id: string; exerciseId: string; exerciseName: string; muscleGroupName: string; targetSets: number; targetRepsMin: number; targetRepsMax: number; notes?: string };
   sets: SetLog[];
   sessionId: string;
   sessionDate: string;
@@ -376,6 +385,11 @@ function ExerciseLogCard({
           <Mini label="נפח" value={`${stats.volume.toLocaleString('he-IL')}kg`} />
           <Mini label="1RM" value={stats.est1RM.toFixed(1)} />
         </div>
+        {log.notes?.trim() && !/^\[.*\]$/.test(log.notes.trim()) && (
+          <p className="field mb-2 px-2.5 py-1.5 rounded-lg text-xs text-fg-muted whitespace-pre-wrap">
+            {log.notes}
+          </p>
+        )}
         <ul className="space-y-1">
           {sets.map((s) => (
             <li
@@ -388,7 +402,9 @@ function ExerciseLogCard({
                 }`}
                 aria-hidden
               />
-              <span className="num text-2xs text-fg-dim shrink-0">סט {s.setNumber}</span>
+              <span className="num text-2xs text-fg-dim shrink-0">
+                {s.isDrop ? 'דרופ' : `סט ${s.setNumber}`}
+              </span>
               <span className="num-display ms-auto">
                 {s.weight}kg × {s.reps}
               </span>

@@ -17,6 +17,12 @@ import { attachSubscriptionRenewer } from './features/push/webPush';
 import { SessionDetailPage } from './features/progress/SessionDetailPage';
 import { ExerciseHistoryPage } from './features/workout/ExerciseHistoryPage';
 import { BodyPage } from './features/body/BodyPage';
+import { isNativeApp } from './native/platform';
+import { startNativeReminders } from './native/reminders';
+import { startNativeRestTimer } from './native/restTimer';
+import { startShortcutSummaries } from './native/shortcutSummaries';
+import { startUnsavedWorkoutReminders } from './native/workoutReminders';
+import { WeeklySummaryPage } from './features/progress/WeeklySummaryPage';
 
 export function App() {
   const [ready, setReady] = useState(false);
@@ -31,10 +37,21 @@ export function App() {
         // kept forever and surfaced on the dashboard — losing a session because
         // the user forgot to press Save is the one failure mode that matters.
         await purgeEmptyWorkoutDrafts(24);
-        // Start in-app supplement scheduler (also handles delivering notifications).
-        startSupplementScheduler();
-        // Listen for SW-relayed pushsubscriptionchange and auto-resubscribe.
-        attachSubscriptionRenewer();
+        if (isNativeApp()) {
+          // iOS app: queue reminders with the OS so they fire while closed.
+          startNativeReminders();
+          // Rest countdown on the lock screen + a ring when it ends.
+          startNativeRestTimer();
+          // "Your workout is still open" nudges for unsaved drafts.
+          startUnsavedWorkoutReminders();
+          // Workout/weekly summaries for the iOS Shortcuts actions.
+          startShortcutSummaries();
+        } else {
+          // Start in-app supplement scheduler (also handles delivering notifications).
+          startSupplementScheduler();
+          // Listen for SW-relayed pushsubscriptionchange and auto-resubscribe.
+          attachSubscriptionRenewer();
+        }
       } catch (err) {
         console.error('Bootstrap failed:', err);
         setBootError(err instanceof Error ? err.message : String(err));
@@ -89,6 +106,7 @@ export function App() {
               path="/progress/session/:sessionId"
               element={<SessionDetailPage />}
             />
+            <Route path="/progress/week" element={<WeeklySummaryPage />} />
             <Route path="/body" element={<BodyPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

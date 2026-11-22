@@ -16,14 +16,15 @@ import {
   totalVolume as setsVolume,
 } from '@/utils/scoring';
 import {
-  prescribe,
-  resolveIncrement,
+  prescriptionForExercise,
+  targetRepsForSet,
   pastSetsFromLogs,
   formatLastSets,
+  STUCK_SESSIONS,
   type PastSet,
 } from '@/utils/progression';
-import { detectStall } from '@/utils/stall';
 import { getExerciseStatsHistory, getRecentWorkoutSessions } from '@/db/queries';
+import { historyIdsOf, isLive } from '@/db/repair';
 
 /** Build an initial draft for the workout by pulling last-session values. */
 export async function buildDraftFromWorkout(
@@ -41,9 +42,11 @@ export async function buildDraftFromWorkout(
     await db.muscleGroups.where('workoutId').equals(workoutId).toArray()
   ).sort((a, b) => a.order - b.order);
   const groupIds = groups.map((g) => g.id);
-  const exercises = (
-    await db.exercises.where('muscleGroupId').anyOf(groupIds).toArray()
-  ).sort((a, b) => a.order - b.order);
+  // Archived exercises keep their muscleGroupId (so they can be put back where
+  // they were) but are not part of the lineup any more.
+  const exercises = (await db.exercises.where('muscleGroupId').anyOf(groupIds).toArray())
+    .filter(isLive)
+    .sort((a, b) => a.order - b.order);
 
   const drafts: DraftExercise[] = [];
   for (const g of groups) {
@@ -55,15 +58,14 @@ export async function buildDraftFromWorkout(
   return { workout, drafts };
 }
 
-/** The sets logged for this exercise in its most recent completed session. */
-async function lastSessionSets(
-  exerciseId: string,
-  stats: ExerciseSessionStats[],
-): Promise<PastSet[]> {
-  if (stats.length === 0) return [];
-  const lastSessionId = stats[stats.length - 1]!.sessionId;
-  const logs = await db.exerciseLogs.where('sessionId').equals(lastSessionId).toArray();
-  const log = logs.find((l) => l.exerciseId === exerciseId);
+/**
+ * The sets logged for this exercise in one completed session. Matches any of
+ * its history ids, so linked variants (merged or duplicated-plan rows) feed
+ * the per-set targets too.
+ */
+async function sessionSets(historyIds: string[], sessionId: string): Promise<PastSet[]> {
+  const logs = await db.exerciseLogs.where('sessionId').equals(sessionId).toArray();
+  const log = logs.find((l) => historyIds.includes(l.exerciseId));
   if (!log) return [];
   const sets = (await db.setLogs.where('exerciseLogId').equals(log.id).toArray()).sort(
     (a, b) => a.setNumber - b.setNumber,
@@ -71,29 +73,54 @@ async function lastSessionSets(
   return pastSetsFromLogs(sets);
 }
 
+/** Sets of the most recent sessions, oldest → newest — what `prescribe` reads. */
+async function recentSessionSets(
+  historyIds: string[],
+  stats: ExerciseSessionStats[],
+): Promise<PastSet[][]> {
+  const recent = stats.slice(-STUCK_SESSIONS);
+  return Promise.all(recent.map((s) => sessionSets(historyIds, s.sessionId)));
+}
+
+/** How far back a session note still counts as "what you wrote last time". */
+const NOTE_LOOKBACK_SESSIONS = 3;
+
+/**
+ * Is this log note something the user wrote, rather than a copy of the pinned
+ * note (older versions snapshotted it onto every log) or a system marker like
+ * "[נוסף באימון בודד]"?
+ */
+export function isUserNote(note: string | undefined, pinned: string | undefined): note is string {
+  const t = note?.trim();
+  if (!t) return false;
+  if (/^\[.*\]$/.test(t)) return false;
+  return t !== (pinned ?? '').trim();
+}
+
+/** The newest note written on this exercise in one of its last few sessions. */
+async function recentSessionNote(
+  historyIds: string[],
+  stats: ExerciseSessionStats[],
+  pinned: string | undefined,
+): Promise<{ text: string; date: string } | undefined> {
+  const recent = stats.slice(-NOTE_LOOKBACK_SESSIONS).reverse();
+  for (const st of recent) {
+    const logs = await db.exerciseLogs.where('sessionId').equals(st.sessionId).toArray();
+    const log = logs.find((l) => historyIds.includes(l.exerciseId));
+    if (isUserNote(log?.notes, pinned)) return { text: log!.notes!.trim(), date: st.date };
+  }
+  return undefined;
+}
+
 export async function buildDraftForExercise(
   ex: Exercise,
   group: MuscleGroup,
 ): Promise<DraftExercise> {
   const stats = await getExerciseStatsHistory(ex.id);
-  const lastSets = await lastSessionSets(ex.id, stats);
+  const history = await recentSessionSets(historyIdsOf(ex), stats);
+  const lastSets = history[history.length - 1] ?? [];
   const settings = await db.settings.get('singleton');
-
-  const increment = resolveIncrement({
-    ...(ex.incrementKg !== undefined ? { incrementKg: ex.incrementKg } : {}),
-    ...(ex.isMachine ? { isMachine: true } : {}),
-    inventory: settings?.plateInventory ?? [],
-  });
-
-  const prescription = prescribe({
-    lastSets,
-    targetSets: ex.targetSets,
-    repsMin: ex.targetRepsMin,
-    repsMax: ex.targetRepsMax,
-    increment,
-    isStalled: detectStall(stats, ex.name) !== null,
-    ...(ex.seedWeight !== undefined ? { seedWeight: ex.seedWeight } : {}),
-  });
+  const prescription = prescriptionForExercise(ex, history, settings?.plateInventory ?? []);
 
   // Every set is pre-loaded with the prescription as ghost text, so tapping ✓
   // logs exactly what the app told the user to do. Typing over it still wins.
@@ -110,10 +137,11 @@ export async function buildDraftForExercise(
     reps: '' as number | '',
     completed: false,
     ...(prescription.weight > 0 ? { ghostWeight: prescription.weight } : {}),
-    ...(hasPrescription ? { ghostReps: prescription.reps } : {}),
+    ...(hasPrescription ? { ghostReps: targetRepsForSet(prescription, i) } : {}),
   }));
 
   const lastSummary = formatLastSets(lastSets);
+  const lastNote = await recentSessionNote(historyIdsOf(ex), stats, ex.notes);
 
   return {
     exerciseId: ex.id,
@@ -129,10 +157,15 @@ export async function buildDraftForExercise(
     ...(ex.notes ? { notes: ex.notes } : {}),
     ...(ex.seedWeight !== undefined ? { seedWeight: ex.seedWeight } : {}),
     ...(ex.incrementKg !== undefined ? { incrementKg: ex.incrementKg } : {}),
+    ...(ex.supersetGroup ? { supersetGroup: ex.supersetGroup } : {}),
     order: ex.order,
     sets,
     prescription,
     ...(lastSummary ? { lastSummary } : {}),
+    ...(lastNote ? { lastNote } : {}),
+    // Always present on a fresh draft: `undefined` marks a draft saved by an
+    // older version, whose session edits still sit in `notes`.
+    sessionNote: '',
   };
 }
 
@@ -151,6 +184,8 @@ export async function buildDraftForExercise(
 export async function reconcileDraftWithPlan(
   workoutId: string,
   drafts: DraftExercise[],
+  /** Plan exercises the user took out of this session — never re-append them. */
+  removedExerciseIds: string[] = [],
 ): Promise<DraftExercise[]> {
   // A freestyle workout owns every exercise ever invented in one, so appending
   // "exercises added to the plan since" would drag the whole back catalogue
@@ -162,9 +197,14 @@ export async function reconcileDraftWithPlan(
     await db.muscleGroups.where('workoutId').equals(workoutId).toArray()
   ).sort((a, b) => a.order - b.order);
   const groupById = new Map(groups.map((g) => [g.id, g]));
+  // Archived rows are excluded: a draft entry for an exercise archived
+  // mid-session is left exactly as it is (it may hold work), and an archived
+  // exercise is never appended.
   const exercises = (
     await db.exercises.where('muscleGroupId').anyOf(groups.map((g) => g.id)).toArray()
-  ).sort((a, b) => a.order - b.order);
+  )
+    .filter(isLive)
+    .sort((a, b) => a.order - b.order);
   const exById = new Map(exercises.map((e) => [e.id, e]));
 
   const refreshed = drafts.map((d) => {
@@ -172,24 +212,38 @@ export async function reconcileDraftWithPlan(
     if (!ex) return d;
     const group = groupById.get(ex.muscleGroupId);
     // Grow the visible rows to a raised target; never shrink, that would drop
-    // sets the user has already logged.
+    // sets the user has already logged. Drop sets are not planned sets.
+    const workRows = d.sets.filter((x) => !x.isDrop).length;
     const sets =
-      d.sets.length >= ex.targetSets
+      workRows >= ex.targetSets
         ? d.sets
         : [
             ...d.sets,
-            ...Array.from({ length: ex.targetSets - d.sets.length }, (_, i) => ({
+            ...Array.from({ length: ex.targetSets - workRows }, (_, i) => ({
               setNumber: d.sets.length + i + 1,
               weight: '' as number | '',
               reps: '' as number | '',
               completed: false,
               ...(d.prescription && d.prescription.weight > 0
-                ? { ghostWeight: d.prescription.weight, ghostReps: d.prescription.reps }
+                ? { ghostWeight: d.prescription.weight, ghostReps: targetRepsForSet(d.prescription, d.sets.length + i) }
                 : {}),
             })),
           ];
+    // Drafts saved before the pinned note existed kept the session's edits in
+    // `notes`. Anything there that is not the exercise's own note was typed
+    // during that session — carry it over as the session note, don't drop it.
+    const legacySessionNote =
+      d.sessionNote === undefined && d.notes && d.notes.trim() !== (ex.notes ?? '').trim()
+        ? d.notes
+        : undefined;
+    const { notes: _oldNotes, supersetGroup: _oldGroup, ...rest } = d;
+    void _oldNotes;
+    void _oldGroup;
     return {
-      ...d,
+      ...rest,
+      sessionNote: d.sessionNote ?? legacySessionNote ?? '',
+      ...(ex.notes ? { notes: ex.notes } : {}),
+      ...(ex.supersetGroup ? { supersetGroup: ex.supersetGroup } : {}),
       exerciseName: ex.name,
       muscleGroupId: ex.muscleGroupId,
       muscleGroupName: group?.name ?? d.muscleGroupName,
@@ -199,13 +253,12 @@ export async function reconcileDraftWithPlan(
       barWeight: ex.barWeight,
       isMachine: !!ex.isMachine,
       defaultRestSec: ex.defaultRestSec,
-      ...(ex.notes ? { notes: ex.notes } : {}),
       ...(ex.incrementKg !== undefined ? { incrementKg: ex.incrementKg } : {}),
       sets,
     };
   });
 
-  const present = new Set(drafts.map((d) => d.exerciseId));
+  const present = new Set([...drafts.map((d) => d.exerciseId), ...removedExerciseIds]);
   const appended: DraftExercise[] = [];
   for (const ex of exercises) {
     if (present.has(ex.id)) continue;
@@ -257,6 +310,15 @@ export interface SaveResult {
   message: string;
 }
 
+/**
+ * The note to store on this exercise's log. A draft from an older version has
+ * no `sessionNote` and kept whatever was typed in `notes`; saving that is
+ * better than dropping it.
+ */
+function sessionNoteOf(d: DraftExercise): string {
+  return (d.sessionNote !== undefined ? d.sessionNote : (d.notes ?? '')).trim();
+}
+
 /** Persist a finished session and return the saved Session plus its score. */
 export async function saveSession(args: {
   workout: Workout;
@@ -283,6 +345,8 @@ export async function saveSession(args: {
 
   const exerciseLogs: ExerciseLog[] = [];
   const setLogs: SetLog[] = [];
+  // Notes on exercises with no sets get no log row (see below); keep them on the session.
+  const orphanNotes: string[] = [];
 
   drafts.forEach((d, idx) => {
     const exerciseLogId = newId();
@@ -302,6 +366,7 @@ export async function saveSession(args: {
         reps: s.reps === '' ? 0 : Number(s.reps),
         completed: s.completed,
         ...(s.rpe !== '' && s.rpe !== undefined ? { rpe: Number(s.rpe) } : {}),
+        ...(s.isDrop ? { isDrop: true } : {}),
       }));
 
     // An exercise the user skipped entirely gets NO log row. Writing an empty
@@ -309,7 +374,10 @@ export async function saveSession(args: {
     // the app declared a lift he never performed to be stalled, and prescribed
     // a deload for it. Its planned sets still count against completion.
     totalPlannedSets += d.targetSets;
-    if (persisted.length === 0) return;
+    if (persisted.length === 0) {
+      if (sessionNoteOf(d)) orphanNotes.push(`${d.exerciseName}: ${sessionNoteOf(d)}`);
+      return;
+    }
 
     exerciseLogs.push({
       id: exerciseLogId,
@@ -323,12 +391,14 @@ export async function saveSession(args: {
       targetRepsMax: d.targetRepsMax,
       barWeight: d.barWeight,
       isMachine: d.isMachine,
-      ...(d.notes ? { notes: d.notes } : {}),
+      // Only what was written in this session. The pinned note lives on the
+      // exercise; copying it here made every log look like it had a note.
+      ...(sessionNoteOf(d) ? { notes: sessionNoteOf(d) } : {}),
     });
     setLogs.push(...persisted);
 
     const completedSets = persisted.filter((p) => p.completed);
-    totalCompletedSets += completedSets.length;
+    totalCompletedSets += completedSets.filter((p) => !p.isDrop).length;
     totalVol += setsVolume(completedSets);
 
     const currentStats = statsForExercise(
@@ -363,7 +433,9 @@ export async function saveSession(args: {
     finishedAt: now(),
     status: 'completed',
     score: score.score,
-    ...(notes ? { notes } : {}),
+    ...(notes || orphanNotes.length
+      ? { notes: [notes, ...orphanNotes].filter(Boolean).join('\n') }
+      : {}),
     totalVolume: totalVol,
     prCount,
     completionPct: score.completionPct,

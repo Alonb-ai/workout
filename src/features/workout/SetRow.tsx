@@ -7,6 +7,8 @@ import { cn } from '@/utils/cn';
 interface Props {
   set: DraftSet;
   index: number;
+  /** Planned-set number shown in the row; null marks a drop set. */
+  ordinal?: number | null;
   /** Included in every control's label — six cards of "set 1" are otherwise
    *  indistinguishable to a screen reader (and to a test). */
   exerciseName: string;
@@ -20,6 +22,7 @@ interface Props {
 export function SetRow({
   set,
   index,
+  ordinal,
   exerciseName,
   onChange,
   onComplete,
@@ -27,7 +30,10 @@ export function SetRow({
   onOpenPlate,
   canRemove,
 }: Props) {
-  const suffix = `${exerciseName} · סט ${index + 1}`;
+  const isDrop = ordinal === null;
+  const suffix = isDrop
+    ? `${exerciseName} · דרופ ${index + 1}`
+    : `${exerciseName} · סט ${ordinal ?? index + 1}`;
   // Expand RPE row when the chip is tapped, or whenever the set already has
   // an RPE — so a previously-entered value is editable without a second tap.
   // Derived, not initialised-once local state: rows are keyed by index, so after
@@ -48,6 +54,7 @@ export function SetRow({
       className={cn(
         'rounded-xl border transition-colors duration-150',
         set.completed ? 'bg-good-soft/25 border-good/25' : 'border-transparent',
+        isDrop && 'ms-4',
       )}
     >
       <div className="flex items-center gap-1.5 py-1.5 px-1.5">
@@ -57,7 +64,7 @@ export function SetRow({
             set.completed ? 'text-good' : 'text-fg-dim',
           )}
         >
-          {index + 1}
+          {isDrop ? '↓' : (ordinal ?? index + 1)}
         </span>
 
         <div className="flex-1 min-w-0 grid grid-cols-2 gap-1.5">

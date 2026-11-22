@@ -1,5 +1,6 @@
 import type { Exercise, ExerciseSessionStats } from '@/types';
 import { deloadWeight } from './stall';
+import { rankSimilar, sameExerciseName } from './exerciseCatalog';
 
 /**
  * Progression rate over the available history. Uses simple end-to-end math
@@ -71,21 +72,40 @@ export function suggestDeload(
 }
 
 /**
- * Other exercises in the same muscle group, excluding the source exercise.
- * Used to suggest swaps for a stalled lift. Plain "same group" matching —
- * any cross-group overlap (e.g. close-grip bench → triceps too) is not
- * modeled, so this stays a hint, not a recommendation engine.
+ * Exercises that train the same muscles, best match first — used to suggest a
+ * swap for a stalled lift. Muscles are inferred from the name and the muscle
+ * group label (see `utils/exerciseCatalog.ts`), so a close-grip bench under
+ * "חזה" still matches the triceps work under "יד אחורית". Archived exercises
+ * qualify (they have history to resume); ones folded into another do not.
  */
 export function findSubstitutes(
   exerciseId: string,
   allExercises: Exercise[],
   limit = 3,
+  groupNameById: Map<string, string> = new Map(),
 ): Exercise[] {
   const src = allExercises.find((e) => e.id === exerciseId);
   if (!src) return [];
-  return allExercises
-    .filter((e) => e.id !== exerciseId && e.muscleGroupId === src.muscleGroupId)
-    .slice(0, limit);
+  const describe = (e: Exercise) => ({
+    name: e.name,
+    ...(e.muscles ? { muscles: e.muscles } : {}),
+    ...(e.isMachine ? { isMachine: true } : {}),
+    groupName: groupNameById.get(e.muscleGroupId) ?? e.archivedFrom?.groupName ?? '',
+  });
+  const pool = allExercises.filter(
+    (e) => e.id !== exerciseId && e.mergedInto === undefined && !sameExerciseName(e.name, src.name),
+  );
+  // Same muscle group always qualifies, even when neither name says anything
+  // the muscle guesser recognises ("Incline Press" under "חזה").
+  return rankSimilar(describe(src), pool, describe, 0)
+    .map((c) => ({
+      ...c,
+      score: c.score + (c.item.muscleGroupId === src.muscleGroupId && src.muscleGroupId ? 40 : 0),
+    }))
+    .filter((c) => c.score >= 30)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((c) => c.item);
 }
 
 function daysBetween(aIso: string, bIso: string): number {

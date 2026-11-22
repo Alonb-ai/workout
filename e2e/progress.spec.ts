@@ -175,17 +175,39 @@ test('a better session is reported as a שיא and a worse one is not', async ({
 
 test('three identical sessions flag a stall and suggest a concrete deload', async ({ page }) => {
   const errors = failOnConsoleErrors(page);
+  // 60×3 on every set of a 3–5 range, three times: inside the range, not
+  // climbing, and two reps from the top (one rep short would get a "break").
+  for (const date of [daysAgo(14), daysAgo(7), daysAgo(0)]) {
+    await benchSession(page, date, '60', '3');
+  }
+
+  await openExerciseHistory(page, BENCH);
+  await expect(page.getByText('סטטוס: תקוע')).toBeVisible();
+  // One plate-pair step back — the old flat 10% was "excessive" for a lift
+  // that is still inside its rep range.
+  await expect(page.getByText('60.0 → 57.5 kg')).toBeVisible();
+  await expect(page.getByText('(–4%)')).toBeVisible();
+  await expect(page.getByText('או החלף ל:')).toBeVisible();
+  // 14 days with no change in top weight → a flat rate, not a divide-by-zero.
+  await expect(page.getByText('+0 kg / חודש')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('a "stalled" lift sitting at the top of its range is not told to deload', async ({ page }) => {
+  const errors = failOnConsoleErrors(page);
   for (const date of [daysAgo(14), daysAgo(7), daysAgo(0)]) {
     await benchSession(page, date, '60');
   }
 
   await openExerciseHistory(page, BENCH);
   await expect(page.getByText('סטטוס: תקוע')).toBeVisible();
-  await expect(page.getByText('60.0 → 55.0 kg')).toBeVisible(); // ~10 %, rounded to a plate pair
-  await expect(page.getByText('(–8%)')).toBeVisible();
-  await expect(page.getByText('או החלף ל:')).toBeVisible();
-  // 14 days with no change in top weight → a flat rate, not a divide-by-zero.
-  await expect(page.getByText('+0 kg / חודש')).toBeVisible();
+  // Every set hit 5 of 5: the coach raises the weight, so no deload figure.
+  await expect(page.getByText(/→ .* kg/)).toBeHidden();
+
+  await openWorkout(page);
+  const strip = page.locator('.card', { hasText: BENCH }).first();
+  await expect(strip.getByText('העלאת משקל')).toBeVisible();
+  await expect(strip.getByText('62.5', { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -255,4 +277,24 @@ test('a lift that was skipped every session is not treated as stalled', async ({
 
   await page.goto('/#/');
   await expect(page.getByText('Lateral Raise')).toBeHidden();
+});
+
+test('the strength index climbs with weight × reps and the per-exercise list shows the trend', async ({ page }) => {
+  const errors = failOnConsoleErrors(page);
+  await benchSession(page, daysAgo(7), '60', '5');
+  await benchSession(page, daysAgo(0), '60', '6'); // one more rep on every set
+
+  await page.goto('/#/progress');
+  // Mean Epley at 60 kg: 5 reps → 70, 6 reps → 72 → +2.9 %.
+  await expect(page.getByText('+2.9%').first()).toBeVisible();
+  const row = page.getByRole('link', { name: `היסטוריה: ${BENCH}` });
+  await expect(row).toContainText('60 × 6/6/6/6/6');
+  await expect(row).toContainText('עולה');
+  // The journal row carries the session's strength change next to its score.
+  await expect(page.locator('a[href*="/progress/session/"]').first()).toContainText('כוח +2.9%');
+
+  // The AI card can always show the brief it would send.
+  await page.getByRole('button', { name: 'הצג טקסט' }).click();
+  await expect(page.getByLabel('טקסט הניתוח')).toHaveValue(/60 × 6\/6\/6\/6\/6/);
+  expect(errors).toEqual([]);
 });
