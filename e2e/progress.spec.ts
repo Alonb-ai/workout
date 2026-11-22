@@ -278,3 +278,23 @@ test('a lift that was skipped every session is not treated as stalled', async ({
   await page.goto('/#/');
   await expect(page.getByText('Lateral Raise')).toBeHidden();
 });
+
+test('the strength index climbs with weight × reps and the per-exercise list shows the trend', async ({ page }) => {
+  const errors = failOnConsoleErrors(page);
+  await benchSession(page, daysAgo(7), '60', '5');
+  await benchSession(page, daysAgo(0), '60', '6'); // one more rep on every set
+
+  await page.goto('/#/progress');
+  // Mean Epley at 60 kg: 5 reps → 70, 6 reps → 72 → +2.9 %.
+  await expect(page.getByText('+2.9%').first()).toBeVisible();
+  const row = page.getByRole('link', { name: `היסטוריה: ${BENCH}` });
+  await expect(row).toContainText('60 × 6/6/6/6/6');
+  await expect(row).toContainText('עולה');
+  // The journal row carries the session's strength change next to its score.
+  await expect(page.locator('a[href*="/progress/session/"]').first()).toContainText('כוח +2.9%');
+
+  // The AI card can always show the brief it would send.
+  await page.getByRole('button', { name: 'הצג טקסט' }).click();
+  await expect(page.getByLabel('טקסט הניתוח')).toHaveValue(/60 × 6\/6\/6\/6\/6/);
+  expect(errors).toEqual([]);
+});

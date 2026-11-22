@@ -114,6 +114,27 @@ every import, so a pre-v6 backup restored on iOS is repaired too).
 
 All this logic lives in `src/utils/scoring.ts` and `src/utils/stall.ts`. Run `npx tsx scripts/smoke.ts` after changing it.
 
+### Progress metrics (`src/utils/progressMetrics.ts`)
+
+The 0–100 score swings when one exercise is skipped, so the Progress screen leads
+with a **strength index** instead. The owner's definition of progress is weight ×
+reps per exercise; every figure compares an exercise only with **itself**.
+
+- **Measure per outing** = mean Epley across the completed sets at the top weight
+  (bodyweight: mean reps). 10/10/9 beats 10/10/8; a weight jump that costs ~2 reps
+  reads as level, which is what double progression should look like.
+- **Index over a window** = geometric mean across every exercise trained in the
+  window of (latest outing so far ÷ baseline), baseline = last outing before the
+  window, else first inside it. Skipped lifts hold their value, new lifts start at 1,
+  so the line can't jump from composition. Ratios clamp to 0.5–2.
+- **Per-session change** (`sessionChanges`) = geometric mean of each exercise vs its
+  own previous outing; shown in the journal as "כוח ±x%". Don't chain these into an
+  index: per-session geometric means don't telescope and drift upward.
+- Deleted exercises keep their trend row (snapshot name) but get no history link.
+- **AI analysis** is a share-sheet hand-off (`buildAnalysisPrompt` + `utils/shareText.ts`):
+  no API key, no server, nothing leaves the device until the user picks a target.
+  Owner chose this over an in-app API key (2026-11-22). Only training numbers go in.
+
 ## Progressive overload (the app's job, not the user's)
 
 `src/utils/progression.ts` decides **what to lift today** for each exercise. It is the
