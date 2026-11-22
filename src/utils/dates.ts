@@ -20,6 +20,14 @@ export function formatHebDate(iso: ISODate): string {
   return format(d, 'EEEE, d בMMMM', { locale: he });
 }
 
+/** Compact date for dense rows: "20.11" this year, "20.11.25" otherwise. */
+export function formatHebDateShort(iso: ISODate): string {
+  const d = parseISO(iso);
+  if (isToday(d)) return 'היום';
+  if (isYesterday(d)) return 'אתמול';
+  return format(d, d.getFullYear() === new Date().getFullYear() ? 'd.M' : 'd.M.yy');
+}
+
 export function formatHebDateFull(iso: ISODate): string {
   return format(parseISO(iso), 'EEEE, d בMMMM yyyy', { locale: he });
 }

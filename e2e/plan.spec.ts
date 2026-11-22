@@ -399,8 +399,8 @@ test('an edit made in the plan is what the logger shows next time the workout is
   await expect(exerciseRow(page, 'Upper A', 'לחיצת חזה במוט')).toBeVisible();
 
   // Delete a second exercise so the planned-set total has to be recomputed.
-  await exerciseRow(page, 'Upper A', 'Lateral Raise').getByLabel('מחק תרגיל').click();
-  await confirmDelete(page).click();
+  await exerciseRow(page, 'Upper A', 'Lateral Raise').getByLabel('הסר תרגיל').click();
+  await page.getByRole('dialog').getByRole('button', { name: 'הוצא', exact: true }).click();
   await expect(exerciseRow(page, 'Upper A', 'Lateral Raise')).toBeHidden();
 
   await page.goto('/#/workout');

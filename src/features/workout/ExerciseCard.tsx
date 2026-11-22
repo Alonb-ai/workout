@@ -151,9 +151,13 @@ interface Props {
   isStalled?: boolean;
   onChange: (next: DraftExercise) => void;
   onRemove: () => void;
+  /** Open the swap picker for this exercise. */
+  onSwap?: () => void;
+  /** Take the exercise out of the plan for good (archived, history kept). */
+  onRetire?: () => void;
 }
 
-export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
+export function ExerciseCard({ draft, isStalled, onChange, onRemove, onSwap, onRetire }: Props) {
   const [plateOpen, setPlateOpen] = useState(false);
   const [plateWeight, setPlateWeight] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -368,6 +372,22 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
 
       <Modal open={menuOpen} onClose={() => setMenuOpen(false)} title="פעולות תרגיל">
         <ul className="divide-y divide-line">
+          {onSwap && (
+            <li>
+              <button
+                className="w-full text-right py-3 px-1 hover:bg-ink-800 rounded-lg"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onSwap();
+                }}
+              >
+                החלף תרגיל
+                <span className="block text-2xs text-fg-dim">
+                  לאימון הזה או גם בתכנית, עם הצעות לתרגילים דומים
+                </span>
+              </button>
+            </li>
+          )}
           <li>
             <button
               className="w-full text-right py-3 px-1 hover:bg-ink-800 rounded-lg"
@@ -430,7 +450,10 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
                 setMenuOpen(false);
                 const ok = await confirmDialog({
                   title: 'להסיר את התרגיל מהאימון?',
-                  body: `${draft.exerciseName} יוסר מהאימון הנוכחי בלבד. הוא יישאר בתכנית והסטים שכבר סומנו ייעלמו.`,
+                  body:
+                  completedCount > 0
+                    ? `${draft.exerciseName} יוסר מהאימון הנוכחי בלבד. הוא יישאר בתכנית, אבל ${completedCount} הסטים שסומנו בו היום לא יישמרו.`
+                    : `${draft.exerciseName} יוסר מהאימון הנוכחי בלבד. הוא יישאר בתכנית.`,
                   confirmLabel: 'הסר',
                   cancelLabel: 'ביטול',
                   destructive: true,
@@ -441,6 +464,28 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
               הסר תרגיל מהאימון
             </button>
           </li>
+          {onRetire && (
+            <li>
+              <button
+                className="w-full text-right py-3 px-1 hover:bg-ink-800 rounded-lg text-fg-muted hover:text-bad"
+                onClick={async () => {
+                  setMenuOpen(false);
+                  const ok = await confirmDialog({
+                    title: 'להוציא מהתכנית?',
+                    body:
+                      `${draft.exerciseName} לא יופיע יותר באימונים הבאים. ההיסטוריה וההתקדמות שלו נשמרות בספריית התרגילים, ואפשר להחזיר אותו בכל רגע.` +
+                      (completedCount > 0 ? ' הסטים שסומנו היום יישמרו עם האימון.' : ''),
+                    confirmLabel: 'הוצא מהתכנית',
+                    cancelLabel: 'ביטול',
+                  });
+                  if (ok) onRetire();
+                }}
+              >
+                הוצא מהתכנית
+                <span className="block text-2xs text-fg-dim">ההיסטוריה נשמרת בספריית התרגילים</span>
+              </button>
+            </li>
+          )}
         </ul>
       </Modal>
 
@@ -705,6 +750,22 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
           <p className="text-2xs text-fg-muted">
             אימונים שכבר נשמרו לא מושפעים בכל מקרה (שומרים תמיד את השם שהיה בעת השמירה).
           </p>
+          {onSwap && (
+            <p className="text-2xs text-fg-muted">
+              עוברים לתרגיל אחר? עדיף{' '}
+              <button
+                type="button"
+                className="text-accent-text underline underline-offset-2"
+                onClick={() => {
+                  setRenameOpen(false);
+                  onSwap();
+                }}
+              >
+                להחליף תרגיל
+              </button>{' '}
+              — שינוי שם מערבב את ההיסטוריה של שני תרגילים שונים.
+            </p>
+          )}
         </div>
       </Modal>
 

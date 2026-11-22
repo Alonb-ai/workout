@@ -214,6 +214,15 @@ export const IconRefresh = (p: IconProps) => (
   </Base>
 );
 
+export const IconMove = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M7 4 3 8l4 4" />
+    <path d="M3 8h13" />
+    <path d="m17 20 4-4-4-4" />
+    <path d="M21 16H8" />
+  </Base>
+);
+
 export const IconTarget = (p: IconProps) => (
   <Base {...p}>
     <circle cx="12" cy="12" r="8" />

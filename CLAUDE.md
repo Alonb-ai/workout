@@ -51,7 +51,9 @@ src/
 v1 initial · v2 push fields · v3 `workoutDrafts` · v4 `bodyMeasurements` + profile ·
 **v5 backfills `barWeight` on barbell lifts** (`inferBarWeight` in `db/db.ts` — it
 returns `null` for "leave alone" and only names it is sure about get a bar, since
-a wrong bar weight makes the plate calculator state the wrong load).
+a wrong bar weight makes the plate calculator state the wrong load) ·
+**v6 re-attaches orphaned logs** (`repairExerciseLinks` in `db/repair.ts`; also run after
+every import, so a pre-v6 backup restored on iOS is repaired too).
 
 ### Dexie entities
 
@@ -60,7 +62,7 @@ a wrong bar weight makes the plate calculator state the wrong load).
 | `plans`        | `id`        | `isActive` (single active expected), `order`                        |
 | `workouts`     | `id`        | `planId`, `code` (e.g. `UA`), `order`                               |
 | `muscleGroups` | `id`        | `workoutId`, `order`                                                |
-| `exercises`    | `id`        | `muscleGroupId`, `barWeight`, `isMachine`, `seedWeight`             |
+| `exercises`    | `id`        | `muscleGroupId`, `barWeight`, `isMachine`, `seedWeight`, `archivedAt`, `historyIds`, `mergedInto`, `muscles` |
 | `sessions`     | `id`        | `workoutId`, `planId`, `date`, `status`, `score`, `totalVolume`     |
 | `exerciseLogs` | `id`        | `sessionId`, `exerciseId`, **snapshots** of name/target/barWeight   |
 | `setLogs`      | `id`        | `exerciseLogId`, `sessionId`, `exerciseId`, `setNumber`, `completed` |
@@ -137,6 +139,34 @@ strip at the top of each `ExerciseCard`, and is written into every set row as gh
 path is the primary way sets get logged, so don't break it. Anything typed always wins.
 
 Covered by `src/utils/progression.test.ts` and the E2E specs; run both after touching it.
+
+## Flexible plan — exercises are archived, never deleted with history
+
+`src/db/exerciseLibrary.ts` owns the exercise lifecycle; read it before touching plan edits.
+
+- **Removing an exercise from the plan archives it** (`archivedAt`, `archivedFrom`). The row
+  — and so its id, which every log points at — stays. Deleting a workout / muscle group /
+  plan calls `retireExercises`: rows with history (logs, an open draft, or linked history)
+  are archived, empty ones deleted. Archived rows still carry their old `muscleGroupId`;
+  code must tolerate that group being gone. **Every query that builds a lineup filters
+  `isLive`** (`buildDraftFromWorkout`, `reconcileDraftWithPlan`, plan editor, stall flags).
+- The plan screen's **"ספריית תרגילים"** lists archived rows: put back into a group
+  (`placeExercise`), link history into another exercise, or delete (only with no history).
+- **Linked history** (`historyIds`): an exercise reads other rows' logs as its own.
+  `getExerciseHistory` and progression use `historyIdsOf(ex)`. Linking is non-destructive
+  (no log is rewritten; `mergedInto` hides the source) and `unlinkHistory` reverses it.
+  Duplicating a plan links each copy to its original, so progression continues.
+- **Swap** (logger ⋯ → "החלף תרגיל"): session-only replaces the draft entry and records the
+  old id in `WorkoutDraft.removedExerciseIds` (so restore doesn't re-append it); "גם בתכנית"
+  is `swapInPlan` — new exercise takes the old one's group + order, old one is archived.
+  A swapped-away card that already holds completed sets is kept, never replaced.
+- **Add exercise** in a session is session-only by default; a newly invented one is
+  created archived (in the library) unless "להוסיף גם לתכנית" is ticked.
+- **Suggestions** (`src/utils/exerciseCatalog.ts`): muscles are guessed from the name +
+  group label (Hebrew & English regex rules; `\b` is ASCII-only, so Hebrew is bounded
+  with `(^|\s)…($|\s)`), overridable per exercise (`muscles`, chips in the plan edit
+  modal). `rankSimilar` scores same primary muscle highest. `EXERCISE_CATALOG` holds ~60
+  Hebrew exercises offered when the user has no good match.
 
 ## Design system
 
