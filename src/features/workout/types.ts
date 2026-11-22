@@ -8,6 +8,11 @@ export interface DraftSet {
   reps: number | '';
   rpe?: number | '';
   completed: boolean;
+  /**
+   * Epoch ms the set was ticked off. Drives the workout clock only; it is not
+   * copied into the saved SetLog. Absent on drafts made before it existed.
+   */
+  completedAt?: number;
   /** Snapshot from last session for ghost-text and comparisons. */
   ghostWeight?: number;
   ghostReps?: number;

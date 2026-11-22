@@ -14,7 +14,8 @@
     "test:e2e": "playwright test",
     "verify": "npm run build && npx tsx scripts/smoke.ts && vitest run",
     "ios:sync": "npm run build && cap sync ios",
-    "ios:open": "cap open ios"
+    "ios:open": "cap open ios",
+    "ios:bump": "node scripts/ios-bump-build.mjs"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.2",

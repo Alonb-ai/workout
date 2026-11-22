@@ -235,6 +235,13 @@ copy into Xcode project.
   planned by the pure `planReminders()`), not the in-app tick or web push.
 - Export uses the share sheet (`native/files.ts`); `<a download>` is a no-op in
   WKWebView.
+- Rest timer: `native/restTimer.ts` mirrors `useTimerStore` to a Live Activity
+  (own plugin `ios/App/App/RestTimerPlugin.swift`, drawn by the
+  `RestTimerWidgetExtension` target) and to notification id 3000 at the end
+  time. Unsaved-workout nudges: `native/workoutReminders.ts`, timing in the pure
+  `features/workout/unsavedWorkoutPlan.ts` (2 h / 12 h after the draft's last
+  change). Local notifications are silent on iOS unless `sound` names a file in
+  `public/`. Build number lives on two targets: bump with `npm run ios:bump`.
 - The app's IndexedDB is separate from the PWA's (different origin). Moving
   data = export → import. Never tell the owner to delete the PWA before the app
   shows the imported data.

@@ -187,14 +187,14 @@ export function ExerciseCard({ draft, isStalled, onChange, onRemove }: Props) {
     const sets = [...draft.sets];
     const s = sets[index]!;
     if (s.completed) {
-      sets[index] = { ...s, completed: false };
+      sets[index] = { ...s, completed: false, completedAt: undefined };
       onChange({ ...draft, sets });
       return;
     }
     const reps = s.reps !== '' ? Number(s.reps) : s.ghostReps;
     if (reps === undefined || reps <= 0) return; // nothing to log yet
     const weight = s.weight !== '' ? Number(s.weight) : (s.ghostWeight ?? 0);
-    sets[index] = { ...s, weight, reps, completed: true };
+    sets[index] = { ...s, weight, reps, completed: true, completedAt: Date.now() };
     onChange({ ...draft, sets });
     startTimer(draft.defaultRestSec, draft.exerciseName);
   };

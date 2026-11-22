@@ -19,6 +19,8 @@ import { ExerciseHistoryPage } from './features/workout/ExerciseHistoryPage';
 import { BodyPage } from './features/body/BodyPage';
 import { isNativeApp } from './native/platform';
 import { startNativeReminders } from './native/reminders';
+import { startNativeRestTimer } from './native/restTimer';
+import { startUnsavedWorkoutReminders } from './native/workoutReminders';
 
 export function App() {
   const [ready, setReady] = useState(false);
@@ -36,6 +38,10 @@ export function App() {
         if (isNativeApp()) {
           // iOS app: queue reminders with the OS so they fire while closed.
           startNativeReminders();
+          // Rest countdown on the lock screen + a ring when it ends.
+          startNativeRestTimer();
+          // "Your workout is still open" nudges for unsaved drafts.
+          startUnsavedWorkoutReminders();
         } else {
           // Start in-app supplement scheduler (also handles delivering notifications).
           startSupplementScheduler();

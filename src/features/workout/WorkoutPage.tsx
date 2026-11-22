@@ -29,6 +29,7 @@ import { toast } from '@/store/toast';
 import { confirmDialog } from '@/components/Confirm';
 import { useStallFlags } from '../dashboard/useStallFlags';
 import { useTimerStore } from '@/store/timer';
+import { WorkoutClock } from './WorkoutClock';
 import { motion, AnimatePresence } from 'framer-motion';
 
 /** Has the user typed/marked anything meaningful that's worth persisting? */
@@ -458,6 +459,7 @@ export function WorkoutPage() {
             <p className="num-display text-lg leading-tight mt-0.5">
               {completedCount} / {plannedCount} סטים
             </p>
+            <WorkoutClock drafts={drafts} getStartedAt={() => startedAtRef.current} />
           </div>
           <button className="btn-primary !min-h-10 !px-3.5 text-xs shrink-0" onClick={onAttemptSave}>
             <IconCheck size={15} /> סיים ושמור

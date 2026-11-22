@@ -203,6 +203,13 @@ export interface AppSettings {
   notificationsEnabled: boolean;
   /** Whether to play a sound + vibrate when rest timer ends. */
   restTimerSound: boolean;
+  /**
+   * iOS app only: lock-screen countdown (Live Activity) + a notification when
+   * rest ends while the app is in the background. Unset = on.
+   */
+  restTimerLockScreen?: boolean;
+  /** iOS app only: nudge when a workout with logged sets sits unsaved. Unset = on. */
+  unsavedWorkoutReminder?: boolean;
   /** Last successful export timestamp. */
   lastBackupAt?: Timestamp;
   /** Tracks dismissed stall suggestions (exerciseId -> last sessionId dismissed). */

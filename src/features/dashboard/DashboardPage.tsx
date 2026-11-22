@@ -19,6 +19,7 @@ import {
 import { formatHebDate, formatHebDateFull, todayISO } from '@/utils/dates';
 import { daysSinceLastWorkout } from '@/utils/dates';
 import { commitDraft } from '../workout/buildSession';
+import { isDraftStale } from '../workout/unsavedWorkoutPlan';
 import { getLatestBodyMeasurement } from '@/db/queries';
 import { toast } from '@/store/toast';
 import { useStallFlags } from './useStallFlags';
@@ -167,7 +168,10 @@ export function DashboardPage() {
               (s, ex) => s + ex.sets.filter((x) => x.completed).length,
               0,
             );
-            const forgotten = d.sessionDate < today && doneSets > 0;
+            // Also "forgotten": today's workout that has sat untouched for hours
+            // with sets logged — the save button was almost certainly missed.
+            const stale = d.sessionDate >= today && isDraftStale(d, Date.now());
+            const forgotten = (d.sessionDate < today && doneSets > 0) || stale;
 
             if (forgotten) {
               return (
@@ -185,7 +189,10 @@ export function DashboardPage() {
                       </p>
                       <p className="font-bold truncate text-sm">{d.workoutName}</p>
                       <p className="text-2xs text-fg-muted num">
-                        {formatHebDate(d.sessionDate)} · {doneSets}/{totalSets} סטים
+                        {stale
+                          ? `נערך לאחרונה ${format(new Date(d.updatedAt), 'HH:mm')}`
+                          : formatHebDate(d.sessionDate)}{' '}
+                        · {doneSets}/{totalSets} סטים
                       </p>
                     </div>
                   </div>

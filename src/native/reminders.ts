@@ -62,6 +62,8 @@ async function rebuild(): Promise<void> {
       title: r.title,
       body: r.body,
       schedule: { at: r.at, allowWhileIdle: true },
+      // Without a sound iOS delivers local notifications silently.
+      sound: 'chime.wav',
       extra: { url: r.url },
     })),
   });

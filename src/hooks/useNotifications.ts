@@ -63,7 +63,7 @@ function fromNative(p: PermissionStatus): NotifPermission {
   return 'default';
 }
 
-async function refreshNativePermission(): Promise<void> {
+export async function refreshNativePermission(): Promise<void> {
   try {
     const next = fromNative(await LocalNotifications.checkPermissions());
     if (next !== nativePerm) {

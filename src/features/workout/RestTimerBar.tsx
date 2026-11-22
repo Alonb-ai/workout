@@ -6,6 +6,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useRef } from 'react';
 import { useSettings } from '@/hooks/useSettings';
 import { cn } from '@/utils/cn';
+import { isNativeApp } from '@/native/platform';
+import { showNotification } from '@/hooks/useNotifications';
 
 type AudioCtor = typeof AudioContext;
 interface WindowWithWebkit extends Window {
@@ -106,12 +108,21 @@ export function GlobalRestTimerBar() {
       scheduledRef.current = scheduleBeeps(msUntilEnd);
     }
 
-    // Vibration at end as a second cue. No SW notification — per user request
-    // the timer should only nudge while the app is in the foreground.
+    // Vibration at end as a second cue. If the page is hidden but still running
+    // (desktop / Android), also post a notification. The iOS app does this
+    // natively instead (`native/restTimer.ts`): a scheduled iOS notification
+    // that rings even while the app is suspended, which no web timer can.
+    const label = useTimerStore.getState().label;
     vibrateTimeoutRef.current = window.setTimeout(() => {
       vibrateTimeoutRef.current = null;
       if ('vibrate' in navigator) {
         navigator.vibrate?.([80, 60, 80]);
+      }
+      if (!isNativeApp() && document.visibilityState === 'hidden') {
+        void showNotification('המנוחה נגמרה', {
+          body: label ? `${label} · הזמן לסט הבא` : 'הזמן לסט הבא',
+          tag: 'rest-timer',
+        });
       }
       // The store keeps `endsAt` set after the countdown ends (the bar stays up
       // showing 0:00), so this effect never re-runs — release the screen lock

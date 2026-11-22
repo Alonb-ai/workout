@@ -233,10 +233,30 @@ export function SettingsPage() {
           </Row>
           <ToggleRow
             title="צליל + רטט בסיום מנוחה"
-            sub="נשמע גם כשהמסך כבוי, כל עוד האפליקציה בחזית"
+            sub={
+              native
+                ? 'גם בהתראה שמגיעה כשהטלפון נעול'
+                : 'נשמע גם כשהמסך כבוי, כל עוד האפליקציה בחזית'
+            }
             checked={settings.restTimerSound}
             onChange={(v) => updateSettings({ restTimerSound: v })}
           />
+          {native && (
+            <ToggleRow
+              title="טיימר מנוחה במסך הנעילה"
+              sub="ספירה לאחור במסך הנעילה ובאי הדינמי, והתראה כשהמנוחה נגמרת"
+              checked={settings.restTimerLockScreen !== false}
+              onChange={(v) => updateSettings({ restTimerLockScreen: v })}
+            />
+          )}
+          {native && (
+            <ToggleRow
+              title="תזכורת לאימון שלא נשמר"
+              sub="התראה אחרי שעתיים בלי שינוי באימון פתוח עם סטים, ושוב אחרי 12 שעות"
+              checked={settings.unsavedWorkoutReminder !== false}
+              onChange={(v) => updateSettings({ unsavedWorkoutReminder: v })}
+            />
+          )}
         </ul>
       </Section>
 
