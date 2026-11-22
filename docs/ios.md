@@ -44,6 +44,31 @@ pure `planReminders()` in `features/supplements/reminderPlan.ts` (unit-tested).
 IndexedDB is not the home-screen PWA's. Data moves only via export (old app) →
 import (new app). Deleting the iOS app deletes its data — keep exporting backups.
 
+### Shortcuts: workout summaries (e.g. mail them to an AI assistant)
+
+The app adds two actions to the Shortcuts app: **סיכום האימון האחרון** and
+**סיכום שבועי** (Sunday–Saturday). Each returns plain Hebrew text — every
+exercise with its sets (net kg × reps), the previous attempt, and notes — and
+runs without opening the app. The text is rendered by the web layer
+(`src/native/shortcutSummaries.ts`, pure formatting in
+`src/utils/summaryText.ts`) and kept in UserDefaults by
+`ios/App/App/SummaryShortcuts.swift` whenever a session is saved and whenever
+the app is opened.
+
+Weekly email to an assistant (Shortcuts → Automation → **+** → Time of Day,
+e.g. Saturday 21:00, **Run Immediately**):
+
+1. Add action **סיכום שבועי** (search "Iron Track").
+2. Add **Send Email**: To = the assistant's address, Subject = "סיכום אימונים
+   שבועי", Body = the summary. Expand the action and turn **Show Compose
+   Sheet** off so it sends silently. Needs an account set up in Apple Mail.
+
+After every workout, the same shortcut with **סיכום האימון האחרון** can be run
+by hand, from the share sheet, or by Siri ("סיכום האימון האחרון ב-Iron Track").
+
+If the app hasn't been opened since the week started, the weekly action says
+so and returns the last stored week instead of presenting it as this week.
+
 ## First-time setup (Mac)
 
 Requires Node ≥ 22 and Xcode 16+. The lockfile is npm 11's; if `npm ci` complains

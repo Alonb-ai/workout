@@ -18,6 +18,7 @@
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
 		7A1C00000000000000B00000 /* AppViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00060000000000B00006 /* AppViewController.swift */; };
 		7A1C00010000000000B00001 /* RestTimerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00070000000000B00007 /* RestTimerPlugin.swift */; };
+		5D1E00010000000000C00001 /* SummaryShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D1E00020000000000C00002 /* SummaryShortcuts.swift */; };
 		7A1C00020000000000B00002 /* RestTimerAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00080000000000B00008 /* RestTimerAttributes.swift */; };
 		7A1C00030000000000B00003 /* RestTimerAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00080000000000B00008 /* RestTimerAttributes.swift */; };
 		7A1C00040000000000B00004 /* RestTimerWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00090000000000B00009 /* RestTimerWidget.swift */; };
@@ -62,6 +63,7 @@
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		7A1C00060000000000B00006 /* AppViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewController.swift; sourceTree = "<group>"; };
 		7A1C00070000000000B00007 /* RestTimerPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestTimerPlugin.swift; sourceTree = "<group>"; };
+		5D1E00020000000000C00002 /* SummaryShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SummaryShortcuts.swift; sourceTree = "<group>"; };
 		7A1C00080000000000B00008 /* RestTimerAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestTimerAttributes.swift; sourceTree = "<group>"; };
 		7A1C00090000000000B00009 /* RestTimerWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestTimerWidget.swift; sourceTree = "<group>"; };
 		7A1C00100000000000B0000A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -113,6 +115,7 @@
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
 				7A1C00060000000000B00006 /* AppViewController.swift */,
 				7A1C00070000000000B00007 /* RestTimerPlugin.swift */,
+				5D1E00020000000000C00002 /* SummaryShortcuts.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
@@ -258,6 +261,7 @@
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 				7A1C00000000000000B00000 /* AppViewController.swift in Sources */,
 				7A1C00010000000000B00001 /* RestTimerPlugin.swift in Sources */,
+				5D1E00010000000000C00001 /* SummaryShortcuts.swift in Sources */,
 				7A1C00020000000000B00002 /* RestTimerAttributes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -242,6 +242,10 @@ copy into Xcode project.
   `features/workout/unsavedWorkoutPlan.ts` (2 h / 12 h after the draft's last
   change). Local notifications are silent on iOS unless `sound` names a file in
   `public/`. Build number lives on two targets: bump with `npm run ios:bump`.
+- Shortcuts actions "סיכום האימון האחרון" / "סיכום שבועי" (App Intents in
+  `ios/App/App/SummaryShortcuts.swift`) return text that the web layer renders
+  (`utils/summaryText.ts`) and stores in UserDefaults via the `SummaryStore`
+  plugin on every session change and app foreground — Swift can't read IndexedDB.
 - The app's IndexedDB is separate from the PWA's (different origin). Moving
   data = export → import. Never tell the owner to delete the PWA before the app
   shows the imported data.

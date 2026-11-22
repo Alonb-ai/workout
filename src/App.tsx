@@ -20,6 +20,7 @@ import { BodyPage } from './features/body/BodyPage';
 import { isNativeApp } from './native/platform';
 import { startNativeReminders } from './native/reminders';
 import { startNativeRestTimer } from './native/restTimer';
+import { startShortcutSummaries } from './native/shortcutSummaries';
 import { startUnsavedWorkoutReminders } from './native/workoutReminders';
 
 export function App() {
@@ -42,6 +43,8 @@ export function App() {
           startNativeRestTimer();
           // "Your workout is still open" nudges for unsaved drafts.
           startUnsavedWorkoutReminders();
+          // Workout/weekly summaries for the iOS Shortcuts actions.
+          startShortcutSummaries();
         } else {
           // Start in-app supplement scheduler (also handles delivering notifications).
           startSupplementScheduler();
