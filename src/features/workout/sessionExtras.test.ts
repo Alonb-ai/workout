@@ -103,6 +103,14 @@ describe('exercise notes', () => {
     expect((await draftFor('e1')).lastNote).toBeUndefined();
   });
 
+  it('keeps a note written on an exercise with no sets, on the session', async () => {
+    await db.exercises.add(ex('e1', 'לחיצת רגליים'));
+    const d = await draftFor('e1');
+    await saveSession({ workout, drafts: [{ ...d, sessionNote: 'המכונה תקולה' }], date: '2026-11-20', startedAt: T });
+    expect(await db.exerciseLogs.count()).toBe(0);
+    expect((await db.sessions.toArray())[0]!.notes).toBe('לחיצת רגליים: המכונה תקולה');
+  });
+
   it('carries over what was typed into an old-format draft instead of dropping it', async () => {
     await db.exercises.add(ex('e1', 'סקוואט', { notes: 'עמידה רחבה' }));
     const d = await draftFor('e1');

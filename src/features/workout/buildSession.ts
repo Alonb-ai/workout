@@ -345,6 +345,8 @@ export async function saveSession(args: {
 
   const exerciseLogs: ExerciseLog[] = [];
   const setLogs: SetLog[] = [];
+  // Notes on exercises with no sets get no log row (see below); keep them on the session.
+  const orphanNotes: string[] = [];
 
   drafts.forEach((d, idx) => {
     const exerciseLogId = newId();
@@ -372,7 +374,10 @@ export async function saveSession(args: {
     // the app declared a lift he never performed to be stalled, and prescribed
     // a deload for it. Its planned sets still count against completion.
     totalPlannedSets += d.targetSets;
-    if (persisted.length === 0) return;
+    if (persisted.length === 0) {
+      if (sessionNoteOf(d)) orphanNotes.push(`${d.exerciseName}: ${sessionNoteOf(d)}`);
+      return;
+    }
 
     exerciseLogs.push({
       id: exerciseLogId,
@@ -428,7 +433,9 @@ export async function saveSession(args: {
     finishedAt: now(),
     status: 'completed',
     score: score.score,
-    ...(notes ? { notes } : {}),
+    ...(notes || orphanNotes.length
+      ? { notes: [notes, ...orphanNotes].filter(Boolean).join('\n') }
+      : {}),
     totalVolume: totalVol,
     prCount,
     completionPct: score.completionPct,
