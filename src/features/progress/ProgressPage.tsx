@@ -9,15 +9,25 @@ import {
   Area,
   CartesianGrid,
   ComposedChart,
-  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
-import { formatHebDate, formatHebDateFull } from '@/utils/dates';
-import { useMemo } from 'react';
-import { format, parseISO, subDays } from 'date-fns';
+import { formatHebDate } from '@/utils/dates';
+import { useMemo, useState } from 'react';
+import { format, parseISO, subDays, subMonths } from 'date-fns';
+import {
+  buildAnalysisPrompt,
+  buildExerciseHistories,
+  exerciseTrends,
+  indexChange,
+  strengthIndex,
+  sessionChanges,
+} from '@/utils/progressMetrics';
+import { todayISO } from '@/utils/dates';
+import { ExerciseTrendList } from './ExerciseTrendList';
+import { AiAnalysisCard } from './AiAnalysisCard';
 import { he } from 'date-fns/locale';
 
 /** Palette-matched chart chrome. Axes are hairlines, ticks are quiet. */
@@ -68,12 +78,42 @@ function ChartTip({
   );
 }
 
+type Period = 'month' | 'quarter' | 'all';
+const PERIODS: { key: Period; label: string; phrase: string }[] = [
+  { key: 'month', label: 'חודש', phrase: 'בחודש האחרון' },
+  { key: 'quarter', label: '3 חודשים', phrase: 'ב-3 החודשים האחרונים' },
+  { key: 'all', label: 'הכל', phrase: 'בכל התקופה' },
+];
+
+function sinceFor(period: Period): string | null {
+  if (period === 'all') return null;
+  return format(subMonths(new Date(), period === 'month' ? 1 : 3), 'yyyy-MM-dd');
+}
+
+/**
+ * "+8%". Rendered inside `dir="ltr"` wherever it appears: in an RTL run the
+ * bidi algorithm moves a leading sign to the far end ("8%+").
+ */
+function signed(n: number): string {
+  return `${n > 0 ? '+' : ''}${n}%`;
+}
+
 /** ≥80 is a strong session, ≥60 a solid one. Quiet colour, no badge. */
 function scoreTone(score: number | undefined): string {
   if (score === undefined) return 'text-fg-dim';
   if (score >= 80) return 'text-good';
   if (score >= 60) return 'text-accent-text';
   return 'text-fg';
+}
+
+/** Strength change vs each exercise's previous outing — the stable sibling of the score. */
+function SessionChange({ pct }: { pct: number }) {
+  const tone = pct > 1 ? 'text-good' : pct < -1 ? 'text-bad' : 'text-fg-muted';
+  return (
+    <span className={`num ${tone}`}>
+      {' · '}כוח <bdi dir="ltr">{signed(pct)}</bdi>
+    </span>
+  );
 }
 
 export function ProgressPage() {
@@ -106,27 +146,57 @@ export function ProgressPage() {
       .sort((a, b) => b.vol - a.vol);
   }, [sessions.length]);
 
-  const scoreSeries = useMemo(
-    () =>
-      [...sorted]
-        .reverse()
-        .slice(-20)
-        .map((s) => ({
-          // Never an ISO fragment on the axis — "07-25" is a database value.
-          label: format(parseISO(s.date), 'd/M'),
-          full: formatHebDate(s.date),
-          score: s.score ?? 0,
-          volume: s.totalVolume ?? 0,
-        })),
-    [sorted],
+  const [period, setPeriod] = useState<Period>('quarter');
+  const since = sinceFor(period);
+  const periodInfo = PERIODS.find((p) => p.key === period)!;
+
+  // Every completed set, grouped per exercise. Deleted exercises stay in: their
+  // snapshot name carries them, and their history is real.
+  const histories = useLiveQuery(async () => {
+    const [allSessions, logs, sets] = await Promise.all([
+      db.sessions.toArray(),
+      db.exerciseLogs.toArray(),
+      db.setLogs.toArray(),
+    ]);
+    return { histories: buildExerciseHistories(allSessions, logs, sets), sessions: allSessions };
+  }, [sessions.length]);
+  const existingIds = useLiveQuery(
+    async () => new Set((await db.exercises.toArray()).map((e) => e.id)),
+    [],
   );
 
-  const latest = sorted[0];
-  const previous = sorted[1];
-  const scoreDelta =
-    latest?.score !== undefined && previous?.score !== undefined
-      ? latest.score - previous.score
-      : null;
+  const indexSeries = useMemo(
+    () => (histories ? strengthIndex(histories.histories, histories.sessions, since) : []),
+    [histories, since],
+  );
+  const trends = useMemo(
+    () => (histories ? exerciseTrends(histories.histories, since) : []),
+    [histories, since],
+  );
+  const changeBySession = useMemo(
+    () => (histories ? sessionChanges(histories.histories) : new Map<string, { changePct: number }>()),
+    [histories],
+  );
+  const periodChange = indexChange(indexSeries);
+
+  const chartData = useMemo(
+    () =>
+      indexSeries.map((p) => ({
+        // Never an ISO fragment on the axis — "07-25" is a database value.
+        label: format(parseISO(p.date), 'd/M'),
+        full: formatHebDate(p.date),
+        index: p.index,
+      })),
+    [indexSeries],
+  );
+
+  const buildPrompt = () =>
+    histories
+      ? buildAnalysisPrompt(histories.histories, indexSeries, {
+          today: todayISO(),
+          since: since ?? histories.sessions.map((x) => x.date).sort()[0] ?? todayISO(),
+        })
+      : '';
 
   const maxMuscleVol = volumeByMuscle?.[0]?.vol ?? 0;
 
@@ -167,40 +237,60 @@ export function ProgressPage() {
         />
       ) : (
         <>
-          {scoreSeries.length > 0 && (
-            <section className="card overflow-hidden mb-5">
-              {/* The screen's headline: the last score, set as a figure, with the
-                  trend it sits on drawn underneath it. */}
-              <div className="flex items-end justify-between gap-3 px-3.5 pt-3">
-                <div className="min-w-0">
-                  <p className="eyebrow">ציון אחרון</p>
-                  <div className="flex items-baseline gap-2 mt-1">
-                    <span className={`num-display text-4xl leading-none ${scoreTone(latest?.score)}`}>
-                      {latest?.score ?? '—'}
-                    </span>
-                    {scoreDelta !== null && scoreDelta !== 0 && (
-                      <span
-                        className={`num text-xs font-bold ${scoreDelta > 0 ? 'text-good' : 'text-bad'}`}
-                      >
-                        {scoreDelta > 0 ? '+' : ''}
-                        {scoreDelta}
-                      </span>
-                    )}
-                  </div>
-                  {latest && (
-                    <p className="text-2xs text-fg-dim mt-1 truncate">
-                      {formatHebDateFull(latest.date)}
-                    </p>
-                  )}
-                </div>
-                <p className="eyebrow shrink-0 pb-1">{scoreSeries.length} אימונים אחרונים</p>
-              </div>
+          <div className="seg !flex w-full mb-3" role="tablist" aria-label="תקופה">
+            {PERIODS.map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                role="tab"
+                aria-selected={p.key === period}
+                data-active={p.key === period}
+                className="pill-tab flex-1"
+                onClick={() => setPeriod(p.key)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
 
+          <section className="card overflow-hidden mb-5">
+            {/* The screen's headline: is the user getting stronger? Each exercise
+                is measured against itself (weight × reps), so a skipped lift
+                can't swing it the way the per-session score swings. */}
+            <div className="flex items-end justify-between gap-3 px-3.5 pt-3">
+              <div className="min-w-0">
+                <p className="eyebrow">מדד כוח</p>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span
+                    dir="ltr"
+                    className={`num-display text-4xl leading-none ${
+                      periodChange === null
+                        ? 'text-fg-dim'
+                        : periodChange > 0
+                          ? 'text-good'
+                          : periodChange < 0
+                            ? 'text-bad'
+                            : 'text-fg'
+                    }`}
+                  >
+                    {periodChange === null ? '—' : signed(periodChange)}
+                  </span>
+                </div>
+                <p className="text-2xs text-fg-dim mt-1">
+                  {periodInfo.phrase} · {indexSeries.length} אימונים · {trends.length} תרגילים
+                </p>
+              </div>
+            </div>
+            <p className="text-2xs text-fg-muted px-3.5 mt-2">
+              משקל × חזרות בכל תרגיל, מול הביצוע הקודם שלו. תרגיל שדילגת עליו לא מוריד את המדד.
+            </p>
+
+            {chartData.length > 1 && (
               <div className="mt-2" style={{ width: '100%', height: 168 }}>
                 <ResponsiveContainer>
-                  <ComposedChart data={scoreSeries} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+                  <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
                     <defs>
-                      <linearGradient id="scoreFill" x1="0" y1="0" x2="0" y2="1">
+                      <linearGradient id="indexFill" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#ff7a1a" stopOpacity={0.28} />
                         <stop offset="100%" stopColor="#ff7a1a" stopOpacity={0} />
                       </linearGradient>
@@ -215,45 +305,43 @@ export function ProgressPage() {
                       minTickGap={18}
                     />
                     <YAxis
-                      yAxisId="left"
-                      domain={[0, 100]}
-                      ticks={[0, 50, 100]}
-                      width={26}
+                      domain={['dataMin - 2', 'dataMax + 2']}
+                      width={30}
                       axisLine={false}
                       tickLine={false}
                       tick={AXIS_TICK}
+                      tickFormatter={(v: number) => String(Math.round(v))}
                     />
-                    {/* The volume series stays, its axis does not: two numeric
-                        scales on a phone-width chart is chrome, not information. */}
-                    <YAxis yAxisId="right" orientation="right" hide />
                     <Tooltip content={<ChartTip />} cursor={{ stroke: '#2c323a', strokeWidth: 1 }} />
                     <Area
-                      yAxisId="left"
                       type="monotone"
-                      dataKey="score"
+                      dataKey="index"
                       stroke="#ff7a1a"
                       strokeWidth={2}
-                      fill="url(#scoreFill)"
+                      fill="url(#indexFill)"
                       dot={false}
                       activeDot={{ r: 3.5, fill: '#ff7a1a', stroke: '#06080b', strokeWidth: 2 }}
-                      name="ציון"
-                    />
-                    <Line
-                      yAxisId="right"
-                      type="monotone"
-                      dataKey="volume"
-                      stroke="#6ec1ff"
-                      strokeOpacity={0.55}
-                      strokeWidth={1.25}
-                      strokeDasharray="3 3"
-                      dot={false}
-                      activeDot={{ r: 3, fill: '#6ec1ff', stroke: '#06080b', strokeWidth: 2 }}
-                      name="נפח"
+                      name="מדד (100 = תחילת התקופה)"
                     />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
-            </section>
+            )}
+          </section>
+
+          <AiAnalysisCard
+            buildPrompt={buildPrompt}
+            sessionCount={indexSeries.length}
+            periodLabel={periodInfo.phrase}
+          />
+
+          {trends.length > 0 && (
+            <Section
+              title="התקדמות לפי תרגיל"
+              description={`השינוי ${periodInfo.phrase}: הביצוע האחרון מול תחילת התקופה`}
+            >
+              <ExerciseTrendList trends={trends} existing={existingIds ?? new Set()} />
+            </Section>
           )}
 
           {volumeByMuscle && volumeByMuscle.length > 0 && (
@@ -323,6 +411,9 @@ export function ProgressPage() {
                               <span className="num">
                                 {(s.totalVolume ?? 0).toLocaleString('he-IL')}kg נפח
                               </span>
+                              {changeBySession.has(s.id) && (
+                                <SessionChange pct={changeBySession.get(s.id)!.changePct} />
+                              )}
                             </p>
                           </div>
 
