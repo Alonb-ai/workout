@@ -22,6 +22,7 @@ import { startNativeReminders } from './native/reminders';
 import { startNativeRestTimer } from './native/restTimer';
 import { startShortcutSummaries } from './native/shortcutSummaries';
 import { startUnsavedWorkoutReminders } from './native/workoutReminders';
+import { WeeklySummaryPage } from './features/progress/WeeklySummaryPage';
 
 export function App() {
   const [ready, setReady] = useState(false);
@@ -105,6 +106,7 @@ export function App() {
               path="/progress/session/:sessionId"
               element={<SessionDetailPage />}
             />
+            <Route path="/progress/week" element={<WeeklySummaryPage />} />
             <Route path="/body" element={<BodyPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { db } from '@/db/db';
 import { Section } from '@/components/Section';
 import { EmptyState } from '@/components/EmptyState';
-import { IconArrowLeft, IconBarbell, IconChart, IconTrophy } from '@/components/Icon';
+import { IconArrowLeft, IconBarbell, IconCalendar, IconChart, IconTrophy } from '@/components/Icon';
 import { sortSessionsDesc } from '@/utils/scoring';
 import {
   Area,
@@ -219,9 +219,14 @@ export function ProgressPage() {
 
   return (
     <div className="pt-3">
-      <header className="mb-4 px-1">
-        <p className="eyebrow">התקדמות</p>
-        <h1 className="text-2xl font-extrabold tracking-tight">היומן שלך</h1>
+      <header className="mb-4 px-1 flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <p className="eyebrow">התקדמות</p>
+          <h1 className="text-2xl font-extrabold tracking-tight">היומן שלך</h1>
+        </div>
+        <Link to="/progress/week" className="btn-ghost !min-h-10 !px-3 text-xs shrink-0">
+          <IconCalendar size={15} /> סיכום שבועי
+        </Link>
       </header>
 
       {sorted.length === 0 ? (

@@ -19,6 +19,9 @@ import { confirmDialog } from '@/components/Confirm';
 import { IconChart, IconEdit, IconPlus, IconTrash } from '@/components/Icon';
 import { MeasurementModal } from './MeasurementModal';
 import { ProfileModal } from './ProfileModal';
+import { BodyPhotos } from './BodyPhotos';
+import { BodyCircumferences } from './BodyCircumferences';
+import { CIRCUMFERENCES } from './bodyMetrics';
 import { formatHebDate } from '@/utils/dates';
 import { format, parseISO, differenceInDays, isToday, isYesterday } from 'date-fns';
 import { he } from 'date-fns/locale';
@@ -98,6 +101,7 @@ export function BodyPage() {
     latest && latest.fatPct !== undefined ? categorizeBodyFat(latest.fatPct, sex) : null;
   const profileComplete = isProfileComplete(profile);
   const hasFat = list.some((m) => m.fatPct !== undefined);
+  const hasCirc = list.some((m) => CIRCUMFERENCES.some((c) => m[c.key] !== undefined));
 
   // The two secondary readings on the latest measurement, as a recessed strip
   // inside the hero. Built as a list so one-of-two renders full width.
@@ -123,7 +127,7 @@ export function BodyPage() {
         <div className="pt-6">
           <EmptyState
             title="עוד לא הזנת מדידות"
-            description="הוסף משקל גוף — אופציונלית גם % שומן ומסת שריר מ-InBody. נשמור היסטוריה ונציג מגמות."
+            description="הוסף משקל גוף — אופציונלית גם % שומן ומסת שריר מ-InBody, היקפים ותמונות התקדמות. נשמור היסטוריה ונציג מגמות."
             icon={<IconChart size={24} />}
             action={
               <button onClick={onAdd} className="btn-primary">
@@ -369,6 +373,23 @@ export function BodyPage() {
             </Section>
           )}
 
+          {hasCirc && (
+            <Section title="היקפים" description="ס״מ · השינוי מהמדידה הראשונה">
+              <BodyCircumferences list={list} />
+            </Section>
+          )}
+
+          <Section
+            title="תמונות התקדמות"
+            action={
+              <button className="btn-ghost !min-h-9 !px-3 text-xs" onClick={onAdd}>
+                <IconPlus size={14} /> תמונות
+              </button>
+            }
+          >
+            <BodyPhotos list={list} onAdd={onAdd} />
+          </Section>
+
           <Section title="היסטוריה" description={`${list.length} מדידות`}>
             <ul className="card divide-y divide-line-muted overflow-hidden">
               {[...list].reverse().map((m, i, rows) => {
@@ -410,6 +431,16 @@ export function BodyPage() {
                               <span className="num">{m.muscleMass} kg</span> שריר
                             </>
                           )}
+                        </p>
+                      )}
+                      {(CIRCUMFERENCES.some((c) => m[c.key] !== undefined) ||
+                        (m.photos?.length ?? 0) > 0) && (
+                        <p className="text-2xs text-fg-dim truncate">
+                          {CIRCUMFERENCES.filter((c) => m[c.key] !== undefined)
+                            .map((c) => `${c.label} ${m[c.key]}`)
+                            .join(' · ')}
+                          {(m.photos?.length ?? 0) > 0 &&
+                            `${CIRCUMFERENCES.some((c) => m[c.key] !== undefined) ? ' · ' : ''}${m.photos!.length === 1 ? 'תמונה אחת' : `${m.photos!.length} תמונות`}`}
                         </p>
                       )}
                       {m.notes && (
