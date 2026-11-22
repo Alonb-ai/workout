@@ -74,6 +74,36 @@ async function lastSessionSets(
   return pastSetsFromLogs(sets);
 }
 
+/** How far back a session note still counts as "what you wrote last time". */
+const NOTE_LOOKBACK_SESSIONS = 3;
+
+/**
+ * Is this log note something the user wrote, rather than a copy of the pinned
+ * note (older versions snapshotted it onto every log) or a system marker like
+ * "[נוסף באימון בודד]"?
+ */
+export function isUserNote(note: string | undefined, pinned: string | undefined): note is string {
+  const t = note?.trim();
+  if (!t) return false;
+  if (/^\[.*\]$/.test(t)) return false;
+  return t !== (pinned ?? '').trim();
+}
+
+/** The newest note written on this exercise in one of its last few sessions. */
+async function recentSessionNote(
+  historyIds: string[],
+  stats: ExerciseSessionStats[],
+  pinned: string | undefined,
+): Promise<{ text: string; date: string } | undefined> {
+  const recent = stats.slice(-NOTE_LOOKBACK_SESSIONS).reverse();
+  for (const st of recent) {
+    const logs = await db.exerciseLogs.where('sessionId').equals(st.sessionId).toArray();
+    const log = logs.find((l) => historyIds.includes(l.exerciseId));
+    if (isUserNote(log?.notes, pinned)) return { text: log!.notes!.trim(), date: st.date };
+  }
+  return undefined;
+}
+
 export async function buildDraftForExercise(
   ex: Exercise,
   group: MuscleGroup,
@@ -117,6 +147,7 @@ export async function buildDraftForExercise(
   }));
 
   const lastSummary = formatLastSets(lastSets);
+  const lastNote = await recentSessionNote(historyIdsOf(ex), stats, ex.notes);
 
   return {
     exerciseId: ex.id,
@@ -132,10 +163,15 @@ export async function buildDraftForExercise(
     ...(ex.notes ? { notes: ex.notes } : {}),
     ...(ex.seedWeight !== undefined ? { seedWeight: ex.seedWeight } : {}),
     ...(ex.incrementKg !== undefined ? { incrementKg: ex.incrementKg } : {}),
+    ...(ex.supersetGroup ? { supersetGroup: ex.supersetGroup } : {}),
     order: ex.order,
     sets,
     prescription,
     ...(lastSummary ? { lastSummary } : {}),
+    ...(lastNote ? { lastNote } : {}),
+    // Always present on a fresh draft: `undefined` marks a draft saved by an
+    // older version, whose session edits still sit in `notes`.
+    sessionNote: '',
   };
 }
 
@@ -182,13 +218,14 @@ export async function reconcileDraftWithPlan(
     if (!ex) return d;
     const group = groupById.get(ex.muscleGroupId);
     // Grow the visible rows to a raised target; never shrink, that would drop
-    // sets the user has already logged.
+    // sets the user has already logged. Drop sets are not planned sets.
+    const workRows = d.sets.filter((x) => !x.isDrop).length;
     const sets =
-      d.sets.length >= ex.targetSets
+      workRows >= ex.targetSets
         ? d.sets
         : [
             ...d.sets,
-            ...Array.from({ length: ex.targetSets - d.sets.length }, (_, i) => ({
+            ...Array.from({ length: ex.targetSets - workRows }, (_, i) => ({
               setNumber: d.sets.length + i + 1,
               weight: '' as number | '',
               reps: '' as number | '',
@@ -198,8 +235,21 @@ export async function reconcileDraftWithPlan(
                 : {}),
             })),
           ];
+    // Drafts saved before the pinned note existed kept the session's edits in
+    // `notes`. Anything there that is not the exercise's own note was typed
+    // during that session — carry it over as the session note, don't drop it.
+    const legacySessionNote =
+      d.sessionNote === undefined && d.notes && d.notes.trim() !== (ex.notes ?? '').trim()
+        ? d.notes
+        : undefined;
+    const { notes: _oldNotes, supersetGroup: _oldGroup, ...rest } = d;
+    void _oldNotes;
+    void _oldGroup;
     return {
-      ...d,
+      ...rest,
+      sessionNote: d.sessionNote ?? legacySessionNote ?? '',
+      ...(ex.notes ? { notes: ex.notes } : {}),
+      ...(ex.supersetGroup ? { supersetGroup: ex.supersetGroup } : {}),
       exerciseName: ex.name,
       muscleGroupId: ex.muscleGroupId,
       muscleGroupName: group?.name ?? d.muscleGroupName,
@@ -209,7 +259,6 @@ export async function reconcileDraftWithPlan(
       barWeight: ex.barWeight,
       isMachine: !!ex.isMachine,
       defaultRestSec: ex.defaultRestSec,
-      ...(ex.notes ? { notes: ex.notes } : {}),
       ...(ex.incrementKg !== undefined ? { incrementKg: ex.incrementKg } : {}),
       sets,
     };
@@ -267,6 +316,15 @@ export interface SaveResult {
   message: string;
 }
 
+/**
+ * The note to store on this exercise's log. A draft from an older version has
+ * no `sessionNote` and kept whatever was typed in `notes`; saving that is
+ * better than dropping it.
+ */
+function sessionNoteOf(d: DraftExercise): string {
+  return (d.sessionNote !== undefined ? d.sessionNote : (d.notes ?? '')).trim();
+}
+
 /** Persist a finished session and return the saved Session plus its score. */
 export async function saveSession(args: {
   workout: Workout;
@@ -312,6 +370,7 @@ export async function saveSession(args: {
         reps: s.reps === '' ? 0 : Number(s.reps),
         completed: s.completed,
         ...(s.rpe !== '' && s.rpe !== undefined ? { rpe: Number(s.rpe) } : {}),
+        ...(s.isDrop ? { isDrop: true } : {}),
       }));
 
     // An exercise the user skipped entirely gets NO log row. Writing an empty
@@ -333,12 +392,14 @@ export async function saveSession(args: {
       targetRepsMax: d.targetRepsMax,
       barWeight: d.barWeight,
       isMachine: d.isMachine,
-      ...(d.notes ? { notes: d.notes } : {}),
+      // Only what was written in this session. The pinned note lives on the
+      // exercise; copying it here made every log look like it had a note.
+      ...(sessionNoteOf(d) ? { notes: sessionNoteOf(d) } : {}),
     });
     setLogs.push(...persisted);
 
     const completedSets = persisted.filter((p) => p.completed);
-    totalCompletedSets += completedSets.length;
+    totalCompletedSets += completedSets.filter((p) => !p.isDrop).length;
     totalVol += setsVolume(completedSets);
 
     const currentStats = statsForExercise(

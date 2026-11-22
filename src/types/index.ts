@@ -63,8 +63,19 @@ export interface Exercise {
   barWeight: number;
   /** True if this lift uses a machine/stack (plate calc shows net only). */
   isMachine?: boolean;
+  /**
+   * The exercise's pinned note: machine settings, seat height, grip — whatever
+   * the user needs to see every time. Shown on the card in every session and
+   * edited from there (written straight to this row, not via the session).
+   */
   notes?: string;
   order: number;
+  /**
+   * Exercises in the same workout that share this id, and sit next to each
+   * other in the lineup, are done as a superset: rest starts only once every
+   * member has done the round. Not indexed; no migration.
+   */
+  supersetGroup?: string;
   /** Seed starting weight (informational only — used by logger when no prior session). */
   seedWeight?: number;
   /**
@@ -162,6 +173,11 @@ export interface ExerciseLog {
   targetRepsMax: number;
   barWeight: number;
   isMachine?: boolean;
+  /**
+   * What the user wrote about this exercise in THIS session ("stay at 70 until
+   * 8×6"). Shown on the card next time. Logs saved before the pinned note
+   * existed may hold a copy of the exercise's notes here instead.
+   */
   notes?: string;
 }
 
@@ -177,6 +193,12 @@ export interface SetLog {
   rpe?: number;
   completed: boolean;
   restSec?: number;
+  /**
+   * A drop set: done straight after the set before it at a lower weight. It
+   * counts toward volume but not toward the planned set count, and progression
+   * never reads it. Not indexed; no migration.
+   */
+  isDrop?: boolean;
 }
 
 export interface Supplement {

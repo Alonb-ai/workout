@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/db/db';
+import { db, newId } from '@/db/db';
 import { Section } from '@/components/Section';
 import { EmptyState } from '@/components/EmptyState';
 import { Modal } from '@/components/Modal';
@@ -13,7 +13,7 @@ import {
   IconTrophy,
   IconWarn,
 } from '@/components/Icon';
-import { ExerciseCard } from './ExerciseCard';
+import { ExerciseCard, doneWorkSets } from './ExerciseCard';
 import { AddExerciseModal } from './AddExerciseModal';
 import { SwapExerciseModal } from './SwapExerciseModal';
 import { archiveExercises } from '@/db/exerciseLibrary';
@@ -39,6 +39,7 @@ function isDraftDirty(drafts: DraftExercise[], notes: string, removedIds: string
   // Taking a plan exercise out of today's session is a choice worth keeping
   // across a reload — otherwise it would silently come back.
   if (removedIds.length > 0) return true;
+  if (drafts.some((d) => (d.sessionNote ?? '').trim().length > 0)) return true;
   return drafts.some((d) =>
     d.sets.some(
       (s) =>
@@ -48,6 +49,21 @@ function isDraftDirty(drafts: DraftExercise[], notes: string, removedIds: string
         (s.rpe !== undefined && s.rpe !== ''),
     ),
   );
+}
+
+/**
+ * Neighbouring exercises that share a superset id form one run. Membership is
+ * by adjacency, so an exercise moved away from its partner simply stops being
+ * part of the superset instead of dragging rest-timer rules along with it.
+ */
+function supersetRuns(drafts: DraftExercise[]): DraftExercise[][] {
+  const runs: DraftExercise[][] = [];
+  for (const d of drafts) {
+    const last = runs[runs.length - 1];
+    if (d.supersetGroup && last && last[0]!.supersetGroup === d.supersetGroup) last.push(d);
+    else runs.push([d]);
+  }
+  return runs;
 }
 
 interface LocationState {
@@ -117,6 +133,42 @@ export function WorkoutPage() {
 
   const stallFlags = useStallFlags();
   const stalledIds = new Set(stallFlags.map((s) => s.exerciseId));
+
+  /**
+   * Join two neighbouring exercises into one superset. Written to the
+   * exercises too, so the pairing comes back next time. If the lower one was
+   * already in another superset, that whole superset joins this one.
+   */
+  const linkSuperset = async (a: DraftExercise, b: DraftExercise) => {
+    const group = a.supersetGroup ?? b.supersetGroup ?? newId();
+    const absorb = b.supersetGroup && b.supersetGroup !== group ? b.supersetGroup : null;
+    const ids = drafts
+      .filter(
+        (d) =>
+          d.exerciseId === a.exerciseId ||
+          d.exerciseId === b.exerciseId ||
+          (absorb !== null && d.supersetGroup === absorb),
+      )
+      .map((d) => d.exerciseId);
+    setDrafts((cur) =>
+      cur.map((d) => (ids.includes(d.exerciseId) ? { ...d, supersetGroup: group } : d)),
+    );
+    await Promise.all(
+      ids.map((id) => db.exercises.update(id, { supersetGroup: group, updatedAt: Date.now() })),
+    );
+  };
+
+  const unlinkSuperset = async (d: DraftExercise) => {
+    setDrafts((cur) =>
+      cur.map((c) => {
+        if (c.exerciseId !== d.exerciseId) return c;
+        const { supersetGroup: _g, ...rest } = c;
+        void _g;
+        return rest;
+      }),
+    );
+    await db.exercises.update(d.exerciseId, { supersetGroup: undefined, updatedAt: Date.now() });
+  };
 
   useEffect(() => {
     if (!selectedWorkoutId) return;
@@ -278,7 +330,7 @@ export function WorkoutPage() {
   // exercise that was never logged at all, so the "missing sets" warning never
   // appeared for exactly the case it exists to catch.
   const incomplete = useMemo(
-    () => drafts.some((d) => d.sets.filter((s) => s.completed).length < d.targetSets),
+    () => drafts.some((d) => doneWorkSets(d) < d.targetSets),
     [drafts],
   );
 
@@ -511,31 +563,62 @@ export function WorkoutPage() {
               </p>
             )}
             <AnimatePresence>
-              {drafts.map((d) => (
-                <ExerciseCard
-                  key={d.exerciseId}
-                  draft={d}
-                  isStalled={stalledIds.has(d.exerciseId)}
-                  onChange={(next) =>
-                    setDrafts((cur) =>
-                      cur.map((c) => (c.exerciseId === next.exerciseId ? next : c)),
-                    )
-                  }
-                  onRemove={() => {
-                    setDrafts((cur) => cur.filter((c) => c.exerciseId !== d.exerciseId));
-                    setRemovedIds((cur) => (cur.includes(d.exerciseId) ? cur : [...cur, d.exerciseId]));
-                  }}
-                  onSwap={() => setSwapTarget(d)}
-                  onRetire={async () => {
-                    await archiveExercises([d.exerciseId]);
-                    // Logged sets stay in today's session; an untouched card goes.
-                    if (!d.sets.some((x) => x.completed)) {
-                      setDrafts((cur) => cur.filter((c) => c.exerciseId !== d.exerciseId));
-                    }
-                    toast.success(`${d.exerciseName} הוצא מהתכנית. ההיסטוריה שלו בספריית התרגילים.`);
-                  }}
-                />
-              ))}
+              {supersetRuns(drafts).map((run) => {
+                const renderCard = (d: DraftExercise, runIndex: number) => {
+                  const idx = drafts.indexOf(d);
+                  const nextDraft = drafts[idx + 1];
+                  const linkedToNext =
+                    !!d.supersetGroup && nextDraft?.supersetGroup === d.supersetGroup;
+                  return (
+                    <ExerciseCard
+                      key={d.exerciseId}
+                      draft={d}
+                      {...(run.length > 1 ? { superset: { members: run, index: runIndex } } : {})}
+                      {...(nextDraft && !linkedToNext
+                        ? { onLinkNext: () => void linkSuperset(d, nextDraft) }
+                        : {})}
+                      {...(run.length > 1 ? { onUnlink: () => void unlinkSuperset(d) } : {})}
+                      isStalled={stalledIds.has(d.exerciseId)}
+                      onChange={(next) =>
+                        setDrafts((cur) =>
+                          cur.map((c) => (c.exerciseId === next.exerciseId ? next : c)),
+                        )
+                      }
+                      onRemove={() => {
+                        setDrafts((cur) => cur.filter((c) => c.exerciseId !== d.exerciseId));
+                        setRemovedIds((cur) => (cur.includes(d.exerciseId) ? cur : [...cur, d.exerciseId]));
+                      }}
+                      onSwap={() => setSwapTarget(d)}
+                      onRetire={async () => {
+                        await archiveExercises([d.exerciseId]);
+                        // Logged sets stay in today's session; an untouched card goes.
+                        if (!d.sets.some((x) => x.completed)) {
+                          setDrafts((cur) => cur.filter((c) => c.exerciseId !== d.exerciseId));
+                        }
+                        toast.success(`${d.exerciseName} הוצא מהתכנית. ההיסטוריה שלו בספריית התרגילים.`);
+                      }}
+                    />
+                  );
+                };
+                if (run.length === 1) return renderCard(run[0]!, 0);
+                return (
+                  <div
+                    key={`superset-${run[0]!.exerciseId}`}
+                    className="relative ps-3 space-y-2"
+                    aria-label="סופרסט"
+                    role="group"
+                  >
+                    <span
+                      className="absolute top-1 bottom-1 start-0 w-[3px] rounded-full bg-accent/70"
+                      aria-hidden
+                    />
+                    <p className="eyebrow text-accent-text">
+                      סופרסט · {run.length} תרגילים ברצף, מנוחה בסוף הסבב
+                    </p>
+                    {run.map((d, i) => renderCard(d, i))}
+                  </div>
+                );
+              })}
             </AnimatePresence>
             <button
               type="button"
@@ -574,7 +657,7 @@ export function WorkoutPage() {
           </>
         }
       >
-        <SummaryBody drafts={drafts} completed={completedCount} planned={plannedCount} />
+        <SummaryBody drafts={drafts} completed={drafts.reduce((n, d) => n + doneWorkSets(d), 0)} planned={plannedCount} />
       </Modal>
 
       {/* Pre-save: incomplete warning */}
@@ -609,11 +692,11 @@ export function WorkoutPage() {
           </div>
           <ul className="text-xs text-fg-muted space-y-1 mt-2">
             {drafts
-              .filter((d) => d.sets.filter((s) => s.completed).length < d.targetSets)
+              .filter((d) => doneWorkSets(d) < d.targetSets)
               .map((d) => (
                 <li key={d.exerciseId} className="flex items-center gap-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-warn" />
-                  {d.exerciseName}: {d.sets.filter((s) => s.completed).length}/{d.targetSets}
+                  {d.exerciseName}: {doneWorkSets(d)}/{d.targetSets}
                 </li>
               ))}
           </ul>
@@ -746,7 +829,7 @@ function SummaryBody({
       <div className="card-flat p-2 max-h-56 overflow-y-auto">
         <ul className="text-xs space-y-1.5">
           {drafts.map((d) => {
-            const done = d.sets.filter((s) => s.completed).length;
+            const done = doneWorkSets(d);
             return (
               <li
                 key={d.exerciseId}

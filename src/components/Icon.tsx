@@ -251,3 +251,25 @@ export const IconChevronDown = (p: IconProps) => (
   </Base>
 );
 
+
+export const IconNote = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M5 4h10l4 4v12H5z" />
+    <path d="M15 4v4h4" />
+    <path d="M8 12h8M8 16h5" />
+  </Base>
+);
+
+export const IconStairs = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M4 18h3v-4h3v-4h3V6h3" />
+    <path d="M20 20H4" />
+  </Base>
+);
+
+export const IconLink = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1" />
+    <path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" />
+  </Base>
+);

@@ -338,7 +338,7 @@ function ExerciseLogCard({
   sessionDate,
   onEditSet,
 }: {
-  log: { id: string; exerciseId: string; exerciseName: string; muscleGroupName: string; targetSets: number; targetRepsMin: number; targetRepsMax: number };
+  log: { id: string; exerciseId: string; exerciseName: string; muscleGroupName: string; targetSets: number; targetRepsMin: number; targetRepsMax: number; notes?: string };
   sets: SetLog[];
   sessionId: string;
   sessionDate: string;
@@ -376,6 +376,11 @@ function ExerciseLogCard({
           <Mini label="נפח" value={`${stats.volume.toLocaleString('he-IL')}kg`} />
           <Mini label="1RM" value={stats.est1RM.toFixed(1)} />
         </div>
+        {log.notes?.trim() && !/^\[.*\]$/.test(log.notes.trim()) && (
+          <p className="field mb-2 px-2.5 py-1.5 rounded-lg text-xs text-fg-muted whitespace-pre-wrap">
+            {log.notes}
+          </p>
+        )}
         <ul className="space-y-1">
           {sets.map((s) => (
             <li
@@ -388,7 +393,9 @@ function ExerciseLogCard({
                 }`}
                 aria-hidden
               />
-              <span className="num text-2xs text-fg-dim shrink-0">סט {s.setNumber}</span>
+              <span className="num text-2xs text-fg-dim shrink-0">
+                {s.isDrop ? 'דרופ' : `סט ${s.setNumber}`}
+              </span>
               <span className="num-display ms-auto">
                 {s.weight}kg × {s.reps}
               </span>

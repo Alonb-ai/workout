@@ -1,4 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks';
+import { isUserNote } from './buildSession';
 import { Link, useParams } from 'react-router-dom';
 import { db } from '@/db/db';
 import { Section } from '@/components/Section';
@@ -434,13 +435,20 @@ export function ExerciseHistoryPage() {
                         <Mini label="נפח" value={`${cur.volume.toLocaleString('he-IL')}kg`} />
                         <Mini label="1RM" value={`${cur.est1RM.toFixed(1)}`} />
                       </div>
+                      {isUserNote(h.exerciseLog.notes, exercise.notes) && (
+                        <p className="field mt-1.5 px-2.5 py-1.5 rounded-lg text-xs text-fg-muted whitespace-pre-wrap">
+                          {h.exerciseLog.notes}
+                        </p>
+                      )}
                       <div className="mt-1.5 grid grid-cols-2 gap-1.5">
                         {h.sets.map((s) => (
                           <div
                             key={s.id}
                             className="field flex items-center justify-between px-2 py-1 rounded-lg"
                           >
-                            <span className="num text-2xs text-fg-dim">סט {s.setNumber}</span>
+                            <span className="num text-2xs text-fg-dim">
+                              {s.isDrop ? 'דרופ' : `סט ${s.setNumber}`}
+                            </span>
                             <span className="num-display text-xs">
                               {s.weight}kg × {s.reps}
                             </span>
