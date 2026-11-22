@@ -18,6 +18,8 @@ import { confirmDialog } from '@/components/Confirm';
 import { exportAll, importAll, summarizeBackup, wipeAll } from './backup';
 import { useNotificationPermission, useRequestNotificationPermission } from '@/hooks/useNotifications';
 import { seedIfNeeded } from '@/db/seed';
+import { isNativeApp } from '@/native/platform';
+import { shareTextFile } from '@/native/files';
 
 /**
  * One line of a settings list: the label carries the meaning on the leading
@@ -97,6 +99,7 @@ export function SettingsPage() {
   const requestPerm = useRequestNotificationPermission();
 
   const notificationsOn = settings.notificationsEnabled && permission === 'granted';
+  const native = isNativeApp();
 
   const enableNotifications = async () => {
     const res = await requestPerm();
@@ -128,11 +131,28 @@ export function SettingsPage() {
 
   const onExport = async () => {
     const payload = await exportAll();
+    const filename = `iron-track-${new Date().toISOString().slice(0, 10)}.json`;
+    if (isNativeApp()) {
+      // <a download> is a no-op in the iOS app's web view; use the share sheet.
+      try {
+        const shared = await shareTextFile(filename, JSON.stringify(payload, null, 2));
+        if (!shared) {
+          toast.info('הגיבוי בוטל');
+          return;
+        }
+        await updateSettings({ lastBackupAt: Date.now() });
+        toast.success('הגיבוי נשמר');
+      } catch (e) {
+        console.error(e);
+        toast.error('שמירת הגיבוי נכשלה');
+      }
+      return;
+    }
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `iron-track-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -253,7 +273,9 @@ export function SettingsPage() {
             )}
           </div>
           <p className="px-3 pb-3 text-2xs text-fg-dim">
-            ב-iOS דרושה התקנה כ-PWA (הוסף למסך הבית) כדי שהתראות יעבדו.
+            {native
+              ? 'התזכורות מתוזמנות במכשיר ומגיעות גם כשהאפליקציה סגורה.'
+              : 'ב-iOS דרושה התקנה כ-PWA (הוסף למסך הבית) כדי שהתראות יעבדו.'}
           </p>
         </div>
 
@@ -372,7 +394,18 @@ export function SettingsPage() {
       </Section>
 
       <Section title="גיבוי ונתונים">
-        <div className="card p-3 space-y-2">
+        <div id="backup" className="card p-3 space-y-2">
+          {native && (
+            <div className="field p-3 text-2xs leading-relaxed text-fg-muted">
+              <p className="font-semibold text-fg">עוברים מהאפליקציה הישנה (מסך הבית)?</p>
+              <ol className="list-decimal space-y-1 pr-4 mt-1">
+                <li>פותחים את Iron Track הישנה ← הגדרות ← ייצוא לקובץ.</li>
+                <li>שומרים את הקובץ ב"קבצים".</li>
+                <li>כאן לוחצים "ייבוא מקובץ…" ובוחרים אותו.</li>
+              </ol>
+              <p className="pt-1">אל תמחקו את האפליקציה הישנה עד שהנתונים מופיעים כאן.</p>
+            </div>
+          )}
           <button className="btn-ghost w-full" onClick={onExport}>
             <IconDownload size={16} /> ייצוא לקובץ (JSON)
           </button>
@@ -387,7 +420,7 @@ export function SettingsPage() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="application/json"
+            accept="application/json,.json"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -398,6 +431,7 @@ export function SettingsPage() {
         </div>
       </Section>
 
+      {!native && (
       <Section
         title="פוש לרקע (Cloudflare Worker)"
         description="התראות שמגיעות גם כשהאפליקציה סגורה. נדרשת התקנת Worker — ראו worker/README.md."
@@ -473,6 +507,7 @@ export function SettingsPage() {
           </p>
         </div>
       </Section>
+      )}
 
       {/* Kept away from everything else, and reading as dangerous without a
           block of red shouting at the user on every visit. */}

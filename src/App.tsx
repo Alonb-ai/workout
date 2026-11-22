@@ -17,6 +17,8 @@ import { attachSubscriptionRenewer } from './features/push/webPush';
 import { SessionDetailPage } from './features/progress/SessionDetailPage';
 import { ExerciseHistoryPage } from './features/workout/ExerciseHistoryPage';
 import { BodyPage } from './features/body/BodyPage';
+import { isNativeApp } from './native/platform';
+import { startNativeReminders } from './native/reminders';
 
 export function App() {
   const [ready, setReady] = useState(false);
@@ -31,10 +33,15 @@ export function App() {
         // kept forever and surfaced on the dashboard — losing a session because
         // the user forgot to press Save is the one failure mode that matters.
         await purgeEmptyWorkoutDrafts(24);
-        // Start in-app supplement scheduler (also handles delivering notifications).
-        startSupplementScheduler();
-        // Listen for SW-relayed pushsubscriptionchange and auto-resubscribe.
-        attachSubscriptionRenewer();
+        if (isNativeApp()) {
+          // iOS app: queue reminders with the OS so they fire while closed.
+          startNativeReminders();
+        } else {
+          // Start in-app supplement scheduler (also handles delivering notifications).
+          startSupplementScheduler();
+          // Listen for SW-relayed pushsubscriptionchange and auto-resubscribe.
+          attachSubscriptionRenewer();
+        }
       } catch (err) {
         console.error('Bootstrap failed:', err);
         setBootError(err instanceof Error ? err.message : String(err));

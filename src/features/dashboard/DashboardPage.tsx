@@ -28,6 +28,7 @@ import { motion } from 'framer-motion';
 import { format, differenceInDays, parseISO, startOfMonth } from 'date-fns';
 import { updateSettings } from '@/hooks/useSettings';
 import { useSettings } from '@/hooks/useSettings';
+import { isNativeApp } from '@/native/platform';
 
 export function DashboardPage() {
   const today = todayISO();
@@ -132,6 +133,22 @@ export function DashboardPage() {
           <IconSettings />
         </button>
       </header>
+
+      {/* First run of the iOS app: its storage is separate from the home-screen
+          web app's, so the history has to be carried over by file. Disappears
+          as soon as there is one saved session. */}
+      {isNativeApp() && completedSessions && completedSessions.length === 0 && (
+        <Link
+          to="/settings"
+          className="card relative mb-5 block overflow-hidden p-3 ps-4 bg-accent/[0.06]"
+        >
+          <span className="absolute inset-y-0 start-0 w-[3px] bg-accent" aria-hidden />
+          <p className="text-sm font-semibold">יש לך היסטוריה באפליקציה הישנה?</p>
+          <p className="text-2xs text-fg-muted mt-1 leading-relaxed">
+            ייצא גיבוי מהאפליקציה שבמסך הבית וייבא אותו כאן בהגדרות ← גיבוי ונתונים.
+          </p>
+        </Link>
+      )}
 
       {/* In-progress drafts. A draft dated before today is a workout the user
           logged and forgot to save — it gets a one-tap rescue instead of a

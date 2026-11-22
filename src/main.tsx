@@ -13,6 +13,8 @@ import '@fontsource-variable/jetbrains-mono';
 // break on the next update. Revisit only if the precache budget starts to hurt.
 import './index.css';
 import { registerSW } from 'virtual:pwa-register';
+import { isNativeApp } from './native/platform';
+import { bootNativeShell } from './native/boot';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -20,8 +22,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   </React.StrictMode>,
 );
 
-// Auto-update the service worker when a new version is available.
-// (vite-plugin-pwa's `autoUpdate` mode handles activation; we just register here.)
-if ('serviceWorker' in navigator) {
+if (isNativeApp()) {
+  // The iOS app ships its files inside the bundle, so there is nothing for a
+  // service worker to cache, and WKWebView doesn't run one on capacitor://.
+  bootNativeShell();
+} else if ('serviceWorker' in navigator) {
+  // Auto-update the service worker when a new version is available.
+  // (vite-plugin-pwa's `autoUpdate` mode handles activation; we just register here.)
   registerSW({ immediate: true });
 }

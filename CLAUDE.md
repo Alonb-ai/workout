@@ -223,6 +223,22 @@ the query return `?? null`: `undefined` = loading, `null` = missing.
 - **Dexie transactions.** Reads inside an `rw` transaction don't reliably reflect uncommitted writes from the same transaction in all browsers — when a save needs to read history (e.g. to compute PRs), do the reads *before* opening the transaction, then write inside it. See `features/workout/buildSession.ts`.
 - **No `prompt/confirm/alert`.** Already enforced by lint hygiene; reach for `Modal` + `confirmDialog` instead.
 
+## Native iOS app (Capacitor)
+
+The repo also builds an iOS app: `capacitor.config.ts` + `ios/` (Capacitor 8,
+SPM). Full build/TestFlight steps: `docs/ios.md`. `npm run ios:sync` = build +
+copy into Xcode project.
+
+- Native-only code lives in `src/native/` and is gated on `isNativeApp()`; the
+  web build and E2E must behave exactly as before.
+- Reminders in the app are iOS local notifications (`native/reminders.ts`,
+  planned by the pure `planReminders()`), not the in-app tick or web push.
+- Export uses the share sheet (`native/files.ts`); `<a download>` is a no-op in
+  WKWebView.
+- The app's IndexedDB is separate from the PWA's (different origin). Moving
+  data = export → import. Never tell the owner to delete the PWA before the app
+  shows the imported data.
+
 ## Adding a new screen / module
 
 1. Drop it under `src/features/<name>/`.

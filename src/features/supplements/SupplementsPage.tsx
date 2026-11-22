@@ -28,6 +28,7 @@ import { toast } from '@/store/toast';
 import { confirmDialog } from '@/components/Confirm';
 import { useSettings, updateSettings } from '@/hooks/useSettings';
 import { useRequestNotificationPermission, useNotificationPermission, usePlatformInfo } from '@/hooks/useNotifications';
+import { isNativeApp } from '@/native/platform';
 import { computeAdherence } from './adherence';
 import {
   LineChart,
@@ -294,7 +295,7 @@ export function SupplementsPage() {
 
   // Auto re-sync schedule whenever supplements change while push is enabled.
   useEffect(() => {
-    if (!settings.pushSubscribed) return;
+    if (!settings.pushSubscribed || isNativeApp()) return;
     const t = setTimeout(() => {
       void syncSchedule();
     }, 600);
@@ -565,9 +566,13 @@ export function SupplementsPage() {
                 : permission === 'unsupported'
                   ? 'הדפדפן הזה לא תומך בהתראות. נסו דפדפן עדכני.'
                   : notificationsOn
-                    ? 'פעיל. ב-iOS דרושה התקנה כ-PWA למסך הבית.'
+                    ? isNativeApp()
+                      ? 'פעיל. התזכורות מגיעות גם כשהאפליקציה סגורה.'
+                      : 'פעיל. ב-iOS דרושה התקנה כ-PWA למסך הבית.'
                     : permission === 'denied'
-                      ? 'ההרשאה נחסמה. יש לשנות ידנית בהגדרות הדפדפן.'
+                      ? isNativeApp()
+                        ? 'ההרשאה נחסמה. מפעילים בהגדרות האייפון ← Iron Track ← עדכונים.'
+                        : 'ההרשאה נחסמה. יש לשנות ידנית בהגדרות הדפדפן.'
                       : 'לא פעיל. הפעלת התראות תשלח תזכורות בשעות שנקבעו.'
             }
             actions={
@@ -601,6 +606,7 @@ export function SupplementsPage() {
             )}
           </ReminderRow>
 
+          {!isNativeApp() && (
           <ReminderRow
             on={!!settings.pushSubscribed}
             title="פוש לרקע (עובד גם כשהאפליקציה סגורה)"
@@ -651,6 +657,7 @@ export function SupplementsPage() {
               )
             }
           />
+          )}
         </div>
       </Section>
 
