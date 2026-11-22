@@ -133,6 +133,28 @@ reps per exercise; every figure compares an exercise only with **itself**.
   no API key, no server, nothing leaves the device until the user picks a target.
   Owner chose this over an in-app API key (2026-11-22). Only training numbers go in.
 
+### Weekly summary (`src/utils/weeklySummary.ts`, route `/progress/week`)
+
+Sunday → Saturday week vs the week before: sessions, completed sets, volume,
+**sets per muscle** (snapshot `muscleGroupName`), PRs, stuck lifts, strength change.
+Built on `buildExerciseHistories`, so it agrees with the strength index.
+- **PR** needs history (a first outing is never one): heavier top weight →
+  `weight`; else mean-Epley measure > best prior by 0.5 % → `strength`
+  (bodyweight: `reps`).
+- **Stuck** = ≥ 3 outings in a row with no gain in top weight, volume or reps at
+  the top weight (same rule as `detectStall`), only for lifts trained that week.
+  Sorted by reps still missing before a weight increase.
+
+### Body tracking
+
+`BodyMeasurement` carries optional tape circumferences (`waistCm`, `chestCm`,
+`armCm`, `thighCm`, `hipsCm`) and `photos: ProgressPhoto[]` (≤ 1 per pose, JPEG data
+URLs downscaled to 1280 px by `utils/image.ts`). All non-indexed — **no Dexie
+bump** — and photos live inline so the JSON backup carries them. Circumference
+ranges are checked in the save handler (`CIRCUMFERENCE_RANGE`), never clamped.
+The iOS wrapper needs `NSCameraUsageDescription` in Info.plist or "Take Photo"
+from the file picker crashes the app.
+
 ## Progressive overload (the app's job, not the user's)
 
 `src/utils/progression.ts` decides **what to lift today** for each exercise. It is the

@@ -174,9 +174,35 @@ export interface BodyMeasurement {
   bodyWeight: number; // kg
   fatPct?: number; // 0-100
   muscleMass?: number; // kg (skeletal muscle mass per InBody convention)
+  /**
+   * Tape-measure circumferences, cm. Optional and non-indexed, so adding them
+   * needed no Dexie version bump.
+   */
+  waistCm?: number;
+  chestCm?: number;
+  armCm?: number;
+  thighCm?: number;
+  hipsCm?: number;
+  /**
+   * Progress photos taken with this weigh-in, at most one per pose. Stored
+   * inline as downscaled JPEG data URLs so they live in IndexedDB with
+   * everything else and ride along in the JSON backup — a photo that only
+   * existed in a separate blob store would be the first thing a restore lost.
+   * Non-indexed: no Dexie version bump.
+   */
+  photos?: ProgressPhoto[];
   notes?: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+export type PhotoPose = 'front' | 'side' | 'back';
+
+export interface ProgressPhoto {
+  id: ID;
+  pose: PhotoPose;
+  /** `data:image/jpeg;base64,…`, long edge ≤ 1280 px. */
+  dataUrl: string;
 }
 
 /**

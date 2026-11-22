@@ -273,7 +273,14 @@ export function DashboardPage() {
       )}
 
       {/* Quick stats */}
-      <Section title="סטטיסטיקות">
+      <Section
+        title="סטטיסטיקות"
+        action={
+          <Link to="/progress/week" className="text-xs text-accent-text font-semibold">
+            סיכום שבועי ←
+          </Link>
+        }
+      >
         <div className="grid grid-cols-2 gap-2">
           <Stat
             icon={<IconFlame className="text-accent" />}
