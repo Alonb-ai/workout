@@ -102,6 +102,7 @@ export function DashboardPage() {
     if (!lastByWorkout.has(s.workoutId)) lastByWorkout.set(s.workoutId, s.date);
   }
   const nextWorkout = (workouts ?? [])
+    .filter((w) => !w.isFreestyle)
     .map((w) => ({ w, lastDate: lastByWorkout.get(w.id) ?? '' }))
     .sort((a, b) => {
       if (a.lastDate === b.lastDate) return a.w.order - b.w.order;
