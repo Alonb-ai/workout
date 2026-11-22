@@ -133,7 +133,10 @@ export async function ensureFreestyleWorkout(planId: ID): Promise<Workout> {
 export function draftHasWork(d: WorkoutDraft): boolean {
   if (d.notes.trim().length > 0) return true;
   if (d.drafts.some((ex) => (ex.sessionNote ?? '').trim().length > 0)) return true;
-  return d.drafts.some((ex) => ex.sets.some((s) => s.completed));
+  // Typed-but-unticked values are work too (owner, 22.11.2026): never purge them.
+  return d.drafts.some((ex) =>
+    ex.sets.some((s) => s.completed || s.weight !== '' || s.reps !== ''),
+  );
 }
 
 /**

@@ -83,11 +83,18 @@ describe('draftHasWork', () => {
     expect(draftHasWork(makeDraft({ notes: '   \n ' }))).toBe(false);
   });
 
-  it('ignores typed-but-unchecked sets — nothing was confirmed', () => {
+  it('counts typed-but-unticked sets as work', () => {
     const typed = draftExercise({
       sets: [{ setNumber: 1, weight: 60, reps: 8, completed: false }],
     });
-    expect(draftHasWork(makeDraft({ drafts: [typed] }))).toBe(false);
+    expect(draftHasWork(makeDraft({ drafts: [typed] }))).toBe(true);
+  });
+
+  it('an untouched set is not work', () => {
+    const blank = draftExercise({
+      sets: [{ setNumber: 1, weight: '', reps: '', completed: false }],
+    });
+    expect(draftHasWork(makeDraft({ drafts: [blank] }))).toBe(false);
   });
 });
 
@@ -96,6 +103,15 @@ describe('purgeEmptyWorkoutDrafts', () => {
     await db.workoutDrafts.put(makeDraft({ updatedAt: Date.now() - 48 * HOUR }));
     expect(await purgeEmptyWorkoutDrafts(24)).toBe(1);
     expect(await db.workoutDrafts.count()).toBe(0);
+  });
+
+  it('keeps an old draft with typed but unticked values', async () => {
+    const typed = draftExercise({
+      sets: [{ setNumber: 1, weight: 60, reps: '', completed: false }],
+    });
+    await db.workoutDrafts.put(makeDraft({ drafts: [typed], updatedAt: Date.now() - 48 * HOUR }));
+    expect(await purgeEmptyWorkoutDrafts(24)).toBe(0);
+    expect(await db.workoutDrafts.count()).toBe(1);
   });
 
   it('NEVER deletes a draft containing completed sets, however old', async () => {
