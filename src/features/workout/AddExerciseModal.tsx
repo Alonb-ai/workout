@@ -1,16 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { NumberInput } from '@/components/NumberInput';
-import {
-  IconBarbell,
-  IconCheck,
-  IconPlus,
-  IconSearch,
-} from '@/components/Icon';
-import { db, newId, now } from '@/db/db';
+import { IconCheck } from '@/components/Icon';
+import { db } from '@/db/db';
+import { createExercise } from '@/db/exerciseLibrary';
+import { MUSCLE_LABEL } from '@/utils/exerciseCatalog';
 import { buildDraftForExercise } from './buildSession';
+import { ExercisePicker, groupForRow, usePickRows, type PickChoice } from './ExercisePicker';
 import type { DraftExercise } from './types';
-import type { Exercise, MuscleGroup } from '@/types';
+import type { MuscleGroup } from '@/types';
 import { toast } from '@/store/toast';
 
 interface Props {
@@ -24,6 +22,13 @@ interface Props {
 
 type Mode = 'pick' | 'create';
 
+/**
+ * Adding an exercise to a running session is a session-only act by default:
+ * picking from the plan or the library never changes the plan, and a newly
+ * invented exercise is filed in the library (archived) unless the user ticks
+ * "add to the plan". Either way it is a real exercise row, so its history and
+ * progression carry over the next time it is picked.
+ */
 export function AddExerciseModal({
   open,
   onClose,
@@ -32,11 +37,9 @@ export function AddExerciseModal({
   onAdd,
 }: Props) {
   const [mode, setMode] = useState<Mode>('pick');
-  const [search, setSearch] = useState('');
-  const [planExercises, setPlanExercises] = useState<
-    { exercise: Exercise; group: MuscleGroup; workoutName: string; isInCurrentWorkout: boolean }[]
-  >([]);
+  const rows = usePickRows(open, workoutId);
   const [workoutGroups, setWorkoutGroups] = useState<MuscleGroup[]>([]);
+  const [workoutName, setWorkoutName] = useState('');
 
   // Create-new form state
   const [newName, setNewName] = useState('');
@@ -46,62 +49,20 @@ export function AddExerciseModal({
   const [newRepsMax, setNewRepsMax] = useState<number>(10);
   const [newRest, setNewRest] = useState<number>(120);
   const [newIsMachine, setNewIsMachine] = useState(false);
+  const [addToPlan, setAddToPlan] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     (async () => {
       const workout = await db.workouts.get(workoutId);
-      if (!workout) return;
-      // All exercises in the active plan (anywhere), so the user can grab a
-      // lift from a sibling workout if they want.
-      const planWorkouts = await db.workouts
-        .where('planId')
-        .equals(workout.planId)
-        .sortBy('order');
-      const planWorkoutIds = planWorkouts.map((w) => w.id);
-      const allGroups = await db.muscleGroups
-        .where('workoutId')
-        .anyOf(planWorkoutIds)
-        .toArray();
-      const allExercises = await db.exercises
-        .where('muscleGroupId')
-        .anyOf(allGroups.map((g) => g.id))
-        .toArray();
-
-      const groupById = new Map(allGroups.map((g) => [g.id, g]));
-      const workoutById = new Map(planWorkouts.map((w) => [w.id, w]));
-
-      const rows = allExercises
-        .map((e) => {
-          const g = groupById.get(e.muscleGroupId);
-          if (!g) return null;
-          const w = workoutById.get(g.workoutId);
-          return {
-            exercise: e,
-            group: g,
-            workoutName: w?.name ?? '',
-            isInCurrentWorkout: g.workoutId === workoutId,
-          };
-        })
-        .filter((r): r is NonNullable<typeof r> => r !== null)
-        .sort((a, b) => {
-          // Current workout first, then by muscle group order, then by exercise order.
-          if (a.isInCurrentWorkout !== b.isInCurrentWorkout) {
-            return a.isInCurrentWorkout ? -1 : 1;
-          }
-          if (a.group.order !== b.group.order) return a.group.order - b.group.order;
-          return a.exercise.order - b.exercise.order;
-        });
-
+      const groups = (await db.muscleGroups.where('workoutId').equals(workoutId).toArray()).sort(
+        (a, b) => a.order - b.order,
+      );
       if (cancelled) return;
-      setPlanExercises(rows);
-
-      const currentGroups = allGroups
-        .filter((g) => g.workoutId === workoutId)
-        .sort((a, b) => a.order - b.order);
-      setWorkoutGroups(currentGroups);
-      if (!newGroupId && currentGroups[0]) setNewGroupId(currentGroups[0].id);
+      setWorkoutName(workout?.name ?? '');
+      setWorkoutGroups(groups);
+      if (!newGroupId && groups[0]) setNewGroupId(groups[0].id);
     })();
     return () => {
       cancelled = true;
@@ -112,30 +73,45 @@ export function AddExerciseModal({
   useEffect(() => {
     if (open) return;
     setMode('pick');
-    setSearch('');
     setNewName('');
     setNewIsMachine(false);
+    setAddToPlan(false);
   }, [open]);
 
-  const filteredPick = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return planExercises
-      .filter((r) => !existingDraftExerciseIds.has(r.exercise.id))
-      .filter((r) =>
-        q === ''
-          ? true
-          : r.exercise.name.toLowerCase().includes(q) ||
-            r.group.name.toLowerCase().includes(q),
-      );
-  }, [planExercises, search, existingDraftExerciseIds]);
-
-  const pickExisting = async (exerciseId: string) => {
-    const row = planExercises.find((r) => r.exercise.id === exerciseId);
-    if (!row) return;
-    const draft = await buildDraftForExercise(row.exercise, row.group);
+  const pick = async (choice: PickChoice) => {
+    if (choice.kind === 'existing') {
+      const draft = await buildDraftForExercise(choice.row.exercise, groupForRow(choice.row));
+      onAdd(draft);
+      onClose();
+      toast.success(`נוסף: ${choice.row.exercise.name}`);
+      return;
+    }
+    // A catalog idea becomes a library exercise used in this session only.
+    const c = choice.entry;
+    const groupName = MUSCLE_LABEL[c.muscles[0]!];
+    const exercise = await createExercise(
+      {
+        muscleGroupId: '',
+        name: c.name,
+        targetSets: 3,
+        targetRepsMin: c.repsMin,
+        targetRepsMax: c.repsMax,
+        defaultRestSec: 120,
+        barWeight: 0,
+        isMachine: !!c.isMachine,
+        muscles: c.muscles,
+      },
+      { oneOff: true, workoutName, groupName },
+    );
+    const draft = await buildDraftForExercise(exercise, {
+      id: '',
+      workoutId,
+      name: groupName,
+      order: 0,
+    });
     onAdd(draft);
     onClose();
-    toast.success(`נוסף: ${row.exercise.name}`);
+    toast.success(`נוסף לאימון הזה: ${c.name}`);
   };
 
   const createNew = async () => {
@@ -153,34 +129,23 @@ export function AddExerciseModal({
       toast.error('אין קבוצות שריר באימון — צרו קודם באמצעות עורך התכנית');
       return;
     }
-    const t = now();
-    // Place the exercise at the end of the chosen group so the plan order stays clean.
-    const existingInGroup = await db.exercises
-      .where('muscleGroupId')
-      .equals(group.id)
-      .count();
-    const exercise: Exercise = {
-      id: newId(),
-      muscleGroupId: group.id,
-      name,
-      targetSets: Math.max(1, newSets),
-      targetRepsMin: Math.max(1, newRepsMin),
-      targetRepsMax: Math.max(newRepsMin, newRepsMax),
-      defaultRestSec: Math.max(15, newRest),
-      barWeight: 0,
-      isMachine: newIsMachine,
-      order: existingInGroup,
-      createdAt: t,
-      updatedAt: t,
-    };
-    // Always persisted to the plan. The old "one-time only" checkbox added the
-    // exercise to the plan either way and only differed by a marker note that
-    // nothing read — it promised something the app never did.
-    await db.exercises.add(exercise);
+    const exercise = await createExercise(
+      {
+        muscleGroupId: group.id,
+        name,
+        targetSets: Math.max(1, newSets),
+        targetRepsMin: Math.max(1, newRepsMin),
+        targetRepsMax: Math.max(newRepsMin, newRepsMax),
+        defaultRestSec: Math.max(15, newRest),
+        barWeight: 0,
+        isMachine: newIsMachine,
+      },
+      { oneOff: !addToPlan },
+    );
     const draft = await buildDraftForExercise(exercise, group);
     onAdd(draft);
     onClose();
-    toast.success('נוסף לתכנית ולאימון');
+    toast.success(addToPlan ? 'נוסף לתכנית ולאימון' : 'נוסף לאימון הזה');
   };
 
   return (
@@ -214,7 +179,7 @@ export function AddExerciseModal({
           className="pill-tab flex-1 flex items-center justify-center min-h-11"
           onClick={() => setMode('pick')}
         >
-          מהתכנית
+          מהרשימה
         </button>
         <button
           data-active={mode === 'create'}
@@ -226,57 +191,7 @@ export function AddExerciseModal({
       </div>
 
       {mode === 'pick' ? (
-        <>
-          {/* Search leads the flow: on a phone this list is long and the user
-              already knows the name of the lift they want. */}
-          <div className="relative mb-3">
-            <IconSearch
-              size={18}
-              className="absolute top-1/2 -translate-y-1/2 start-3.5 text-fg-dim pointer-events-none"
-            />
-            <input
-              className="input ps-11 !min-h-12 text-base"
-              placeholder="חיפוש לפי שם או קבוצת שריר…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          {filteredPick.length === 0 ? (
-            <p className="text-center text-sm text-fg-muted py-8">
-              {planExercises.length === 0
-                ? 'אין תרגילים בתכנית. צרו קודם בעורך התכנית.'
-                : 'כל התרגילים מהתכנית כבר באימון. נסו "תרגיל חדש".'}
-            </p>
-          ) : (
-            <ul className="card overflow-hidden divide-y divide-line max-h-[55vh] overflow-y-auto">
-              {filteredPick.map((row) => (
-                <li key={row.exercise.id}>
-                  <button
-                    className="w-full text-right px-3 py-2.5 min-h-[56px] hover:bg-ink-800 active:bg-ink-800 transition-colors flex items-center gap-3"
-                    onClick={() => pickExisting(row.exercise.id)}
-                  >
-                    <span className="w-9 h-9 rounded-xl bg-ink-800 border border-line-muted text-accent-text flex items-center justify-center shrink-0">
-                      <IconBarbell size={16} />
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold truncate">{row.exercise.name}</p>
-                      <p className="text-2xs text-fg-dim truncate">
-                        {row.group.name}
-                        {!row.isInCurrentWorkout && row.workoutName
-                          ? ` · מאימון: ${row.workoutName.split('—')[0]?.trim()}`
-                          : ''}
-                      </p>
-                    </div>
-                    <span className="num text-2xs text-fg-muted shrink-0">
-                      {row.exercise.targetSets}×{row.exercise.targetRepsMin}-{row.exercise.targetRepsMax}
-                    </span>
-                    <IconPlus size={18} className="text-accent-text shrink-0" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
+        <ExercisePicker rows={rows} excludeIds={existingDraftExerciseIds} onPick={pick} />
       ) : (
         <div className="space-y-3">
           <div>
@@ -366,10 +281,21 @@ export function AddExerciseModal({
             מכונה / סטאק
           </label>
 
+          <label className="flex items-center gap-3 text-sm card-flat px-3 min-h-[52px] cursor-pointer">
+            <input
+              type="checkbox"
+              className="w-5 h-5 accent-orange-500"
+              checked={addToPlan}
+              onChange={(e) => setAddToPlan(e.target.checked)}
+            />
+            להוסיף גם לתכנית (יופיע בכל אימון הבא)
+          </label>
+
           <p className="relative ps-3 text-2xs text-fg-dim leading-relaxed">
             <span className="absolute inset-y-0 start-0 w-[3px] rounded-full bg-line" aria-hidden />
-            התרגיל נוסף גם לתכנית, כדי שההיסטוריה וההתקדמות שלו יישמרו. אם הוא היה חד-פעמי —
-            אפשר למחוק אותו מעורך התכנית.
+            {addToPlan
+              ? 'התרגיל ייכנס לתכנית של האימון הזה.'
+              : 'התרגיל יתווסף לאימון הזה בלבד ויישמר בספריית התרגילים — ההיסטוריה שלו נשמרת ואפשר לבחור אותו שוב בכל אימון.'}
           </p>
         </div>
       )}

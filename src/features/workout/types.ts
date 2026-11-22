@@ -59,6 +59,12 @@ export interface WorkoutDraft {
   drafts: DraftExercise[];
   sessionDate: ISODate;
   notes: string;
+  /**
+   * Plan exercises taken out of THIS session only (removed or swapped for
+   * something else). Without it, restoring the draft would re-append them as
+   * "exercises added to the plan since". Optional: older drafts lack it.
+   */
+  removedExerciseIds?: ID[];
   startedAt: Timestamp;
   updatedAt: Timestamp;
 }

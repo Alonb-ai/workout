@@ -15,6 +15,8 @@ import {
 } from '@/components/Icon';
 import { ExerciseCard } from './ExerciseCard';
 import { AddExerciseModal } from './AddExerciseModal';
+import { SwapExerciseModal } from './SwapExerciseModal';
+import { archiveExercises } from '@/db/exerciseLibrary';
 import type { DraftExercise } from './types';
 import {
   buildDraftFromWorkout,
@@ -33,8 +35,11 @@ import { WorkoutClock } from './WorkoutClock';
 import { motion, AnimatePresence } from 'framer-motion';
 
 /** Has the user typed/marked anything meaningful that's worth persisting? */
-function isDraftDirty(drafts: DraftExercise[], notes: string): boolean {
+function isDraftDirty(drafts: DraftExercise[], notes: string, removedIds: string[] = []): boolean {
   if (notes.trim().length > 0) return true;
+  // Taking a plan exercise out of today's session is a choice worth keeping
+  // across a reload — otherwise it would silently come back.
+  if (removedIds.length > 0) return true;
   return drafts.some((d) =>
     d.sets.some(
       (s) =>
@@ -97,6 +102,9 @@ export function WorkoutPage() {
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [confirmIncompleteOpen, setConfirmIncompleteOpen] = useState(false);
   const [addExerciseOpen, setAddExerciseOpen] = useState(false);
+  const [swapTarget, setSwapTarget] = useState<DraftExercise | null>(null);
+  // Plan exercises taken out of this session only (removed / swapped away).
+  const [removedIds, setRemovedIds] = useState<string[]>([]);
   const [scoreModalOpen, setScoreModalOpen] = useState(false);
   const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
   const [restoredFromDraft, setRestoredFromDraft] = useState(false);
@@ -127,9 +135,15 @@ export function WorkoutPage() {
         // The draft is a snapshot; the plan may have moved on since. Refresh
         // names/targets and pick up newly added exercises, without touching a
         // single logged set.
-        const reconciled = await reconcileDraftWithPlan(selectedWorkoutId, existing.drafts);
+        const removed = existing.removedExerciseIds ?? [];
+        const reconciled = await reconcileDraftWithPlan(
+          selectedWorkoutId,
+          existing.drafts,
+          removed,
+        );
         if (cancelled) return;
         setDrafts(reconciled);
+        setRemovedIds(removed);
         setSessionDate(existing.sessionDate);
         setNotes(existing.notes);
         startedAtRef.current = existing.startedAt;
@@ -141,6 +155,7 @@ export function WorkoutPage() {
         startedAtRef.current = Date.now();
         setSessionDate(todayISO());
         setNotes('');
+        setRemovedIds([]);
         if (res) setDrafts(res.drafts);
       }
       setLoading(false);
@@ -159,17 +174,22 @@ export function WorkoutPage() {
   // changes one render before the new drafts finish loading, and a closure that
   // paired the new id with the old drafts would write one workout's sets under
   // another workout's key. `latest` just mirrors current state for the callers.
-  const latest = useRef({ drafts, notes, sessionDate });
-  latest.current = { drafts, notes, sessionDate };
+  const latest = useRef({ drafts, notes, sessionDate, removedIds });
+  latest.current = { drafts, notes, sessionDate, removedIds };
 
-  type DraftSnapshot = { drafts: DraftExercise[]; notes: string; sessionDate: string };
+  type DraftSnapshot = {
+    drafts: DraftExercise[];
+    notes: string;
+    sessionDate: string;
+    removedIds: string[];
+  };
 
   const persistDraft = useCallback(
     async (id: string, snap: DraftSnapshot, startedAt: number) => {
       if (savingRef.current) return;
       const workout = id === selectedWorkout?.id ? selectedWorkout : await db.workouts.get(id);
       if (!workout) return;
-      if (isDraftDirty(snap.drafts, snap.notes)) {
+      if (isDraftDirty(snap.drafts, snap.notes, snap.removedIds)) {
         const updatedAt = Date.now();
         await db.workoutDrafts.put({
           workoutId: id,
@@ -179,6 +199,7 @@ export function WorkoutPage() {
           drafts: snap.drafts,
           sessionDate: snap.sessionDate,
           notes: snap.notes,
+          ...(snap.removedIds.length > 0 ? { removedExerciseIds: snap.removedIds } : {}),
           startedAt,
           updatedAt,
         });
@@ -205,7 +226,7 @@ export function WorkoutPage() {
       500,
     );
     return () => window.clearTimeout(timer);
-  }, [drafts, notes, sessionDate, selectedWorkoutId, loading, saveResult, persistDraft]);
+  }, [drafts, notes, sessionDate, removedIds, selectedWorkoutId, loading, saveResult, persistDraft]);
 
   // Ticking or un-ticking a set bypasses the debounce entirely. It is a
   // discrete, deliberate action and it is the only thing in the editor that
@@ -304,6 +325,7 @@ export function WorkoutPage() {
       setRestoredFromDraft(false);
       setLastSavedAt(null);
       setNotes('');
+      setRemovedIds([]);
       setSessionDate(todayISO());
       startedAtRef.current = Date.now();
       const fresh = await buildDraftFromWorkout(selectedWorkoutId);
@@ -339,6 +361,7 @@ export function WorkoutPage() {
     setRestoredFromDraft(false);
     setLastSavedAt(null);
     setNotes('');
+    setRemovedIds([]);
     setSessionDate(todayISO());
     startedAtRef.current = Date.now();
     const res = await buildDraftFromWorkout(selectedWorkoutId);
@@ -500,9 +523,19 @@ export function WorkoutPage() {
                       cur.map((c) => (c.exerciseId === next.exerciseId ? next : c)),
                     )
                   }
-                  onRemove={() =>
-                    setDrafts((cur) => cur.filter((c) => c.exerciseId !== d.exerciseId))
-                  }
+                  onRemove={() => {
+                    setDrafts((cur) => cur.filter((c) => c.exerciseId !== d.exerciseId));
+                    setRemovedIds((cur) => (cur.includes(d.exerciseId) ? cur : [...cur, d.exerciseId]));
+                  }}
+                  onSwap={() => setSwapTarget(d)}
+                  onRetire={async () => {
+                    await archiveExercises([d.exerciseId]);
+                    // Logged sets stay in today's session; an untouched card goes.
+                    if (!d.sets.some((x) => x.completed)) {
+                      setDrafts((cur) => cur.filter((c) => c.exerciseId !== d.exerciseId));
+                    }
+                    toast.success(`${d.exerciseName} הוצא מהתכנית. ההיסטוריה שלו בספריית התרגילים.`);
+                  }}
                 />
               ))}
             </AnimatePresence>
@@ -599,6 +632,38 @@ export function WorkoutPage() {
           onAdd={(newDraft) => {
             // Append to the end so the new exercise shows up after the existing list.
             setDrafts((cur) => [...cur, { ...newDraft, order: cur.length }]);
+            setRemovedIds((cur) => cur.filter((id) => id !== newDraft.exerciseId));
+          }}
+        />
+      )}
+
+      {selectedWorkoutId && (
+        <SwapExerciseModal
+          open={swapTarget !== null}
+          onClose={() => setSwapTarget(null)}
+          workoutId={selectedWorkoutId}
+          target={swapTarget}
+          existingDraftExerciseIds={new Set(drafts.map((d) => d.exerciseId))}
+          onSwap={(incoming) => {
+            const outgoing = swapTarget;
+            if (!outgoing) return;
+            const hasWork = outgoing.sets.some((x) => x.completed);
+            setDrafts((cur) => {
+              const idx = cur.findIndex((c) => c.exerciseId === outgoing.exerciseId);
+              if (idx < 0) return [...cur, { ...incoming, order: cur.length }];
+              const next = [...cur];
+              // Sets already logged on the old exercise are never thrown away:
+              // keep its card and put the new one right after it.
+              if (hasWork) next.splice(idx + 1, 0, incoming);
+              else next.splice(idx, 1, incoming);
+              return next.map((c, i) => ({ ...c, order: i }));
+            });
+            setRemovedIds((cur) => {
+              const without = cur.filter((id) => id !== incoming.exerciseId);
+              return hasWork || without.includes(outgoing.exerciseId)
+                ? without
+                : [...without, outgoing.exerciseId];
+            });
           }}
         />
       )}

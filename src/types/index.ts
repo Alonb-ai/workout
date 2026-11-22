@@ -74,9 +74,53 @@ export interface Exercise {
    * Not indexed — no Dexie migration needed to add it.
    */
   incrementKg?: number;
+  /**
+   * Set when the exercise was taken out of the plan. An archived exercise is
+   * never pre-loaded into a session, but its row — and therefore its id and
+   * every log that points at it — stays, so its history and progression are
+   * intact and it can be put back at any time. Removing an exercise from the
+   * plan archives it; only an exercise with no history is ever hard-deleted.
+   * `muscleGroupId` keeps pointing at where it last lived (the group may since
+   * have been deleted — code must tolerate that). Not indexed; no migration.
+   */
+  archivedAt?: Timestamp;
+  /** Where an archived exercise was taken from, for display ("יום 2 · גב"). */
+  archivedFrom?: { workoutName: string; groupName: string };
+  /**
+   * Ids of OTHER exercise rows whose logs count as this exercise's history:
+   * an older copy from before the plan was duplicated, or a variant the user
+   * linked by hand. Logs are never rewritten to link them — unlinking is just
+   * removing the id again.
+   */
+  historyIds?: ID[];
+  /** This exercise's history was linked into that exercise; it is hidden. */
+  mergedInto?: ID;
+  /**
+   * Muscles this exercise trains, overriding the name-based guess in
+   * `utils/exerciseCatalog.ts`. Drives "similar exercise" suggestions.
+   */
+  muscles?: MuscleTag[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
+
+export type MuscleTag =
+  | 'chest'
+  | 'frontDelts'
+  | 'sideDelts'
+  | 'rearDelts'
+  | 'triceps'
+  | 'lats'
+  | 'upperBack'
+  | 'biceps'
+  | 'forearms'
+  | 'quads'
+  | 'hamstrings'
+  | 'glutes'
+  | 'adductors'
+  | 'calves'
+  | 'abs'
+  | 'lowerBack';
 
 export type SessionStatus = 'draft' | 'completed';
 

@@ -13,6 +13,7 @@ import type {
   BodyMeasurement,
 } from '@/types';
 import type { WorkoutDraft } from '@/features/workout/types';
+import { repairExerciseLinks } from './repair';
 
 /**
  * IronTrackDB
@@ -167,6 +168,34 @@ export class IronTrackDB extends Dexie {
         }
         const s = await tx.table('settings').get('singleton');
         if (s) await tx.table('settings').put({ ...s, schemaVersion: 5 });
+      });
+
+    // v6 — flexible plan: exercises are ARCHIVED instead of deleted
+    // (`archivedAt`, `archivedFrom`), and an exercise can read other rows'
+    // logs as its own history (`historyIds`). None of these fields is
+    // indexed, so the store shape is unchanged. The data step re-attaches
+    // logs whose exercise row an older version hard-deleted: linked into the
+    // single same-named exercise when there is one, otherwise given back an
+    // archived row under their own id. No log or set row is modified.
+    this.version(6)
+      .stores({
+        plans: 'id, isActive, order',
+        workouts: 'id, planId, order, code',
+        muscleGroups: 'id, workoutId, order',
+        exercises: 'id, muscleGroupId, order',
+        sessions: 'id, workoutId, planId, date, status, [workoutId+date]',
+        exerciseLogs: 'id, sessionId, exerciseId, order',
+        setLogs: 'id, exerciseLogId, sessionId, exerciseId, setNumber',
+        supplements: 'id, active, order',
+        supplementLogs: 'id, supplementId, date, [supplementId+date]',
+        settings: 'id',
+        workoutDrafts: 'workoutId, updatedAt',
+        bodyMeasurements: 'id, date',
+      })
+      .upgrade(async (tx) => {
+        await repairExerciseLinks((name) => tx.table(name));
+        const s = await tx.table('settings').get('singleton');
+        if (s) await tx.table('settings').put({ ...s, schemaVersion: 6 });
       });
   }
 }

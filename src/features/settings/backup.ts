@@ -1,5 +1,6 @@
 import { db } from '@/db/db';
 import { ensureSettings } from '@/db/seed';
+import { repairLiveDatabase } from '@/db/exerciseLibrary';
 
 /**
  * Backup/restore/wipe are all driven off `db.tables` rather than a hand-written
@@ -71,6 +72,10 @@ export async function importAll(rawData: unknown): Promise<void> {
     }
   });
   await ensureSettings();
+  // Backups taken before v6 can carry logs whose exercise row an older version
+  // deleted. Re-attach them exactly as the v6 upgrade does, so a restored (or
+  // migrated-to-iOS) database is never worse off than an upgraded one.
+  await repairLiveDatabase();
   // A backup without a `settings` row (older or hand-edited file) would leave
   // `seeded: false`, and the next boot would seed a SECOND copy of the default
   // program on top of the imported one — two plans, both flagged active.

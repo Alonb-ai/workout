@@ -24,6 +24,7 @@ import {
 } from '@/utils/progression';
 import { detectStall } from '@/utils/stall';
 import { getExerciseStatsHistory, getRecentWorkoutSessions } from '@/db/queries';
+import { historyIdsOf, isLive } from '@/db/repair';
 
 /** Build an initial draft for the workout by pulling last-session values. */
 export async function buildDraftFromWorkout(
@@ -41,9 +42,11 @@ export async function buildDraftFromWorkout(
     await db.muscleGroups.where('workoutId').equals(workoutId).toArray()
   ).sort((a, b) => a.order - b.order);
   const groupIds = groups.map((g) => g.id);
-  const exercises = (
-    await db.exercises.where('muscleGroupId').anyOf(groupIds).toArray()
-  ).sort((a, b) => a.order - b.order);
+  // Archived exercises keep their muscleGroupId (so they can be put back where
+  // they were) but are not part of the lineup any more.
+  const exercises = (await db.exercises.where('muscleGroupId').anyOf(groupIds).toArray())
+    .filter(isLive)
+    .sort((a, b) => a.order - b.order);
 
   const drafts: DraftExercise[] = [];
   for (const g of groups) {
@@ -57,13 +60,13 @@ export async function buildDraftFromWorkout(
 
 /** The sets logged for this exercise in its most recent completed session. */
 async function lastSessionSets(
-  exerciseId: string,
+  historyIds: string[],
   stats: ExerciseSessionStats[],
 ): Promise<PastSet[]> {
   if (stats.length === 0) return [];
   const lastSessionId = stats[stats.length - 1]!.sessionId;
   const logs = await db.exerciseLogs.where('sessionId').equals(lastSessionId).toArray();
-  const log = logs.find((l) => l.exerciseId === exerciseId);
+  const log = logs.find((l) => historyIds.includes(l.exerciseId));
   if (!log) return [];
   const sets = (await db.setLogs.where('exerciseLogId').equals(log.id).toArray()).sort(
     (a, b) => a.setNumber - b.setNumber,
@@ -76,7 +79,7 @@ export async function buildDraftForExercise(
   group: MuscleGroup,
 ): Promise<DraftExercise> {
   const stats = await getExerciseStatsHistory(ex.id);
-  const lastSets = await lastSessionSets(ex.id, stats);
+  const lastSets = await lastSessionSets(historyIdsOf(ex), stats);
   const settings = await db.settings.get('singleton');
 
   const increment = resolveIncrement({
@@ -151,6 +154,8 @@ export async function buildDraftForExercise(
 export async function reconcileDraftWithPlan(
   workoutId: string,
   drafts: DraftExercise[],
+  /** Plan exercises the user took out of this session — never re-append them. */
+  removedExerciseIds: string[] = [],
 ): Promise<DraftExercise[]> {
   // A freestyle workout owns every exercise ever invented in one, so appending
   // "exercises added to the plan since" would drag the whole back catalogue
@@ -162,9 +167,14 @@ export async function reconcileDraftWithPlan(
     await db.muscleGroups.where('workoutId').equals(workoutId).toArray()
   ).sort((a, b) => a.order - b.order);
   const groupById = new Map(groups.map((g) => [g.id, g]));
+  // Archived rows are excluded: a draft entry for an exercise archived
+  // mid-session is left exactly as it is (it may hold work), and an archived
+  // exercise is never appended.
   const exercises = (
     await db.exercises.where('muscleGroupId').anyOf(groups.map((g) => g.id)).toArray()
-  ).sort((a, b) => a.order - b.order);
+  )
+    .filter(isLive)
+    .sort((a, b) => a.order - b.order);
   const exById = new Map(exercises.map((e) => [e.id, e]));
 
   const refreshed = drafts.map((d) => {
@@ -205,7 +215,7 @@ export async function reconcileDraftWithPlan(
     };
   });
 
-  const present = new Set(drafts.map((d) => d.exerciseId));
+  const present = new Set([...drafts.map((d) => d.exerciseId), ...removedExerciseIds]);
   const appended: DraftExercise[] = [];
   for (const ex of exercises) {
     if (present.has(ex.id)) continue;
