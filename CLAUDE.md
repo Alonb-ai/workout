@@ -92,9 +92,11 @@ every import, so a pre-v6 backup restored on iOS is repaired too).
    - **Inputs commit on every keystroke**, not on blur (`NumberInput`). iOS's decimal keypad
      has no Return key and backgrounding fires no blur, so blur-only commits meant the flush
      wrote a draft missing the number the user had just typed.
-   - **A draft containing completed sets is never auto-deleted, at any age.**
-     `purgeEmptyWorkoutDrafts` only removes drafts with nothing logged. Drafts dated before
-     today are surfaced on the dashboard as "אימון שלא נשמר" with a one-tap `commitDraft`.
+   - **A draft containing ANY logged work (completed sets, typed weight/reps, or notes) is
+     never auto-deleted, at any age.** `purgeEmptyWorkoutDrafts` (via `draftHasWork`) only
+     removes drafts with nothing entered. Drafts dated before today with completed sets are
+     surfaced on the dashboard as "אימון שלא נשמר" with a one-tap `commitDraft`; other drafts
+     show as "המשך טיוטה".
    - Export/import/wipe iterate `db.tables` rather than a hand-written list — every
      hand-listed version silently forgot a table added by a later `.version()`.
      `importAll` validates the payload **before** clearing anything.
