@@ -66,6 +66,11 @@ describe('formatSets', () => {
     const s = sets('l', 's', 'e', [[60, 8], [0, 12], [57.5, 7], [60, 0, false]]);
     expect(formatSets(s)).toBe('60×8, משקל גוף×12, 57.5×7');
   });
+  it('labels drop sets', () => {
+    const s = sets('l', 's', 'e', [[60, 8], [40, 10]]);
+    s[1]!.isDrop = true;
+    expect(formatSets(s)).toBe('60×8, דרופ 40×10');
+  });
   it('says so when nothing was done', () => {
     expect(formatSets(sets('l', 's', 'e', [[60, 8, false]]))).toBe('לא בוצעו סטים');
   });

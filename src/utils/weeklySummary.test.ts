@@ -210,3 +210,15 @@ describe('buildWeeklySummary', () => {
     expect(text).toContain('bench: 62.5 × 10 (משקל שיא)');
   });
 });
+
+describe('drop sets', () => {
+  it('add volume but are not counted as sets', () => {
+    const f = fx();
+    session(f, '2026-11-23', { curl: [[20, 8], [10, 10]] }, { curl: 'יד קדמית' });
+    f.sets[f.sets.length - 1]!.isDrop = true;
+    const s = buildWeeklySummary({ ...f, weekStart: WEEK });
+    expect(s.sets).toBe(1);
+    expect(s.volume).toBe(260);
+    expect(s.muscles[0]!.sets).toBe(1);
+  });
+});

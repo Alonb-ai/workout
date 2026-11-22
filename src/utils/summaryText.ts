@@ -42,7 +42,7 @@ export function formatSets(sets: SetLog[]): string {
   const done = completedSets(sets);
   if (done.length === 0) return 'לא בוצעו סטים';
   return done
-    .map((s) => (s.weight === 0 ? `משקל גוף×${s.reps}` : `${fmtNum(s.weight)}×${s.reps}`))
+    .map((s) => (s.isDrop ? 'דרופ ' : '') + (s.weight === 0 ? `משקל גוף×${s.reps}` : `${fmtNum(s.weight)}×${s.reps}`))
     .join(', ');
 }
 
@@ -156,7 +156,7 @@ export function buildWeeklySummary(sessions: SessionBundle[], weekStart: ISODate
   const prevVol = prevWeek.reduce((s, b) => s + sessionVolume(b), 0);
   const prs = inWeek.reduce((s, b) => s + (b.session.prCount ?? 0), 0);
   const sets = inWeek.reduce(
-    (s, b) => s + b.exercises.reduce((n, e) => n + completedSets(e.sets).length, 0),
+    (s, b) => s + b.exercises.reduce((n, e) => n + completedSets(e.sets).filter((x) => !x.isDrop).length, 0),
     0,
   );
   lines.push(

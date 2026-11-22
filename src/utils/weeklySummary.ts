@@ -117,6 +117,7 @@ export function buildWeeklySummary(args: {
     const prev = !cur && inPrev(sess.date);
     if (!cur && !prev) continue;
     const vol = s.weight * s.reps;
+    const work = s.isDrop ? 0 : 1; // drop sets add volume, not sets
     const name = logById.get(s.exerciseLogId)?.muscleGroupName?.trim() || 'אחר';
     let m = muscles.get(name);
     if (!m) {
@@ -124,14 +125,14 @@ export function buildWeeklySummary(args: {
       muscles.set(name, m);
     }
     if (cur) {
-      setsCur++;
+      setsCur += work;
       volCur += vol;
-      m.sets++;
+      m.sets += work;
       m.volume += vol;
     } else {
-      setsPrev++;
+      setsPrev += work;
       volPrev += vol;
-      m.prevSets++;
+      m.prevSets += work;
       m.prevVolume += vol;
     }
   }
