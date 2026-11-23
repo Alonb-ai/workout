@@ -251,6 +251,18 @@ export const IconChevronDown = (p: IconProps) => (
   </Base>
 );
 
+export const IconSort = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4" />
+  </Base>
+);
+
+export const IconChevronUp = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M6 15l6-6 6 6" />
+  </Base>
+);
+
 
 export const IconNote = (p: IconProps) => (
   <Base {...p}>

@@ -12,10 +12,13 @@ import {
   IconTrash,
   IconTrophy,
   IconWarn,
+  IconSort,
 } from '@/components/Icon';
 import { ExerciseCard, doneWorkSets } from './ExerciseCard';
 import { AddExerciseModal } from './AddExerciseModal';
 import { SwapExerciseModal } from './SwapExerciseModal';
+import { ReorderExercisesModal } from './ReorderExercisesModal';
+import { stepDraft } from './reorder';
 import { archiveExercises } from '@/db/exerciseLibrary';
 import type { DraftExercise } from './types';
 import {
@@ -35,8 +38,15 @@ import { WorkoutClock } from './WorkoutClock';
 import { motion, AnimatePresence } from 'framer-motion';
 
 /** Has the user typed/marked anything meaningful that's worth persisting? */
-function isDraftDirty(drafts: DraftExercise[], notes: string, removedIds: string[] = []): boolean {
+function isDraftDirty(
+  drafts: DraftExercise[],
+  notes: string,
+  removedIds: string[] = [],
+  reordered = false,
+): boolean {
   if (notes.trim().length > 0) return true;
+  // A chosen exercise order is worth keeping across a reload too.
+  if (reordered) return true;
   // Taking a plan exercise out of today's session is a choice worth keeping
   // across a reload — otherwise it would silently come back.
   if (removedIds.length > 0) return true;
@@ -121,6 +131,9 @@ export function WorkoutPage() {
   const [swapTarget, setSwapTarget] = useState<DraftExercise | null>(null);
   // Plan exercises taken out of this session only (removed / swapped away).
   const [removedIds, setRemovedIds] = useState<string[]>([]);
+  // Exercise order changed in this session (session-only; plan untouched).
+  const [reordered, setReordered] = useState(false);
+  const [reorderOpen, setReorderOpen] = useState(false);
   const [scoreModalOpen, setScoreModalOpen] = useState(false);
   const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
   const [restoredFromDraft, setRestoredFromDraft] = useState(false);
@@ -159,6 +172,11 @@ export function WorkoutPage() {
     );
   };
 
+  const moveOne = (exerciseId: string, dir: -1 | 1) => {
+    setDrafts((cur) => stepDraft(cur, exerciseId, dir));
+    setReordered(true);
+  };
+
   const unlinkSuperset = async (d: DraftExercise) => {
     setDrafts((cur) =>
       cur.map((c) => {
@@ -194,8 +212,14 @@ export function WorkoutPage() {
           removed,
         );
         if (cancelled) return;
+        const had = new Set(existing.drafts.map((d) => d.exerciseId));
+        const added = reconciled.filter((d) => !had.has(d.exerciseId));
+        if (added.length > 0) {
+          toast.info(`נוסף מהתכנית: ${added.map((d) => d.exerciseName).join(', ')}`);
+        }
         setDrafts(reconciled);
         setRemovedIds(removed);
+        setReordered(!!existing.reordered);
         setSessionDate(existing.sessionDate);
         setNotes(existing.notes);
         startedAtRef.current = existing.startedAt;
@@ -208,6 +232,7 @@ export function WorkoutPage() {
         setSessionDate(todayISO());
         setNotes('');
         setRemovedIds([]);
+        setReordered(false);
         if (res) setDrafts(res.drafts);
       }
       setLoading(false);
@@ -226,14 +251,15 @@ export function WorkoutPage() {
   // changes one render before the new drafts finish loading, and a closure that
   // paired the new id with the old drafts would write one workout's sets under
   // another workout's key. `latest` just mirrors current state for the callers.
-  const latest = useRef({ drafts, notes, sessionDate, removedIds });
-  latest.current = { drafts, notes, sessionDate, removedIds };
+  const latest = useRef({ drafts, notes, sessionDate, removedIds, reordered });
+  latest.current = { drafts, notes, sessionDate, removedIds, reordered };
 
   type DraftSnapshot = {
     drafts: DraftExercise[];
     notes: string;
     sessionDate: string;
     removedIds: string[];
+    reordered: boolean;
   };
 
   const persistDraft = useCallback(
@@ -241,7 +267,7 @@ export function WorkoutPage() {
       if (savingRef.current) return;
       const workout = id === selectedWorkout?.id ? selectedWorkout : await db.workouts.get(id);
       if (!workout) return;
-      if (isDraftDirty(snap.drafts, snap.notes, snap.removedIds)) {
+      if (isDraftDirty(snap.drafts, snap.notes, snap.removedIds, snap.reordered)) {
         const updatedAt = Date.now();
         await db.workoutDrafts.put({
           workoutId: id,
@@ -252,6 +278,7 @@ export function WorkoutPage() {
           sessionDate: snap.sessionDate,
           notes: snap.notes,
           ...(snap.removedIds.length > 0 ? { removedExerciseIds: snap.removedIds } : {}),
+          ...(snap.reordered ? { reordered: true } : {}),
           startedAt,
           updatedAt,
         });
@@ -278,7 +305,7 @@ export function WorkoutPage() {
       500,
     );
     return () => window.clearTimeout(timer);
-  }, [drafts, notes, sessionDate, removedIds, selectedWorkoutId, loading, saveResult, persistDraft]);
+  }, [drafts, notes, sessionDate, removedIds, reordered, selectedWorkoutId, loading, saveResult, persistDraft]);
 
   // Ticking or un-ticking a set bypasses the debounce entirely. It is a
   // discrete, deliberate action and it is the only thing in the editor that
@@ -378,6 +405,7 @@ export function WorkoutPage() {
       setLastSavedAt(null);
       setNotes('');
       setRemovedIds([]);
+      setReordered(false);
       setSessionDate(todayISO());
       startedAtRef.current = Date.now();
       const fresh = await buildDraftFromWorkout(selectedWorkoutId);
@@ -414,6 +442,7 @@ export function WorkoutPage() {
     setLastSavedAt(null);
     setNotes('');
     setRemovedIds([]);
+    setReordered(false);
     setSessionDate(todayISO());
     startedAtRef.current = Date.now();
     const res = await buildDraftFromWorkout(selectedWorkoutId);
@@ -564,6 +593,17 @@ export function WorkoutPage() {
                 שומר על ההיסטוריה וההתקדמות שלו.
               </p>
             )}
+            {drafts.length > 1 && (
+              <div className="flex justify-end -mb-1">
+                <button
+                  type="button"
+                  className="btn-ghost !min-h-11 text-xs"
+                  onClick={() => setReorderOpen(true)}
+                >
+                  <IconSort size={15} /> סדר תרגילים
+                </button>
+              </div>
+            )}
             <AnimatePresence>
               {supersetRuns(drafts).map((run) => {
                 const renderCard = (d: DraftExercise, runIndex: number) => {
@@ -591,6 +631,11 @@ export function WorkoutPage() {
                         setRemovedIds((cur) => (cur.includes(d.exerciseId) ? cur : [...cur, d.exerciseId]));
                       }}
                       onSwap={() => setSwapTarget(d)}
+                      {...(idx > 0 ? { onMoveUp: () => moveOne(d.exerciseId, -1) } : {})}
+                      {...(idx < drafts.length - 1
+                        ? { onMoveDown: () => moveOne(d.exerciseId, 1) }
+                        : {})}
+                      {...(drafts.length > 1 ? { onReorder: () => setReorderOpen(true) } : {})}
                       onRetire={async () => {
                         await archiveExercises([d.exerciseId]);
                         // Logged sets stay in today's session; an untouched card goes.
@@ -719,6 +764,16 @@ export function WorkoutPage() {
           }}
         />
       )}
+
+      <ReorderExercisesModal
+        open={reorderOpen}
+        onClose={() => setReorderOpen(false)}
+        drafts={drafts}
+        onChange={(next) => {
+          setDrafts(next);
+          setReordered(true);
+        }}
+      />
 
       {selectedWorkoutId && (
         <SwapExerciseModal

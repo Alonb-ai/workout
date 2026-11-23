@@ -258,19 +258,37 @@ export async function reconcileDraftWithPlan(
     };
   });
 
+  // Exercises added to (or moved into) this workout in the plan since the draft
+  // was made go in at their plan position: right after the nearest exercise
+  // that precedes them in the plan and is already on screen. Appending them at
+  // the bottom hid them below a long session (owner, 23.11.2026).
+  const groupRank = new Map(groups.map((g, i) => [g.id, i]));
+  const planOrder = exercises
+    .filter((ex) => groupById.has(ex.muscleGroupId))
+    .sort(
+      (a, b) =>
+        (groupRank.get(a.muscleGroupId) ?? 0) - (groupRank.get(b.muscleGroupId) ?? 0) ||
+        a.order - b.order,
+    );
   const present = new Set([...drafts.map((d) => d.exerciseId), ...removedExerciseIds]);
-  const appended: DraftExercise[] = [];
-  for (const ex of exercises) {
-    if (present.has(ex.id)) continue;
-    const group = groupById.get(ex.muscleGroupId);
-    if (!group) continue;
-    appended.push(await buildDraftForExercise(ex, group));
+  const result = refreshed.slice();
+  let prevPlanId: string | null = null;
+  for (const ex of planOrder) {
+    if (present.has(ex.id)) {
+      prevPlanId = ex.id;
+      continue;
+    }
+    const group = groupById.get(ex.muscleGroupId)!;
+    const built = await buildDraftForExercise(ex, group);
+    const after = prevPlanId === null ? -1 : result.findIndex((d) => d.exerciseId === prevPlanId);
+    // A predecessor taken out of this session leaves no anchor: fall back to
+    // the end rather than jumping to the top.
+    const at = prevPlanId !== null && after < 0 ? result.length : after + 1;
+    result.splice(at, 0, built);
+    prevPlanId = ex.id;
   }
 
-  return [
-    ...refreshed,
-    ...appended.map((d, i) => ({ ...d, order: refreshed.length + i })),
-  ];
+  return result.map((d, i) => (d.order === i ? d : { ...d, order: i }));
 }
 
 /**
