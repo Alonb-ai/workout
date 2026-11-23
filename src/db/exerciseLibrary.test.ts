@@ -297,6 +297,25 @@ describe('session-only removal survives a draft restore', () => {
     expect((await reconcileDraftWithPlan('w1', onlyA, ['b'])).map((d) => d.exerciseId)).toEqual(['a']);
   });
 
+  it('an exercise added to the plan mid-session goes in at its plan position, not the bottom', async () => {
+    await db.exercises.bulkAdd([
+      ex('a', 'Bench', 'g1', { order: 0 }),
+      ex('c', 'Dips', 'g1', { order: 2 }),
+    ]);
+    const built = await buildDraftFromWorkout('w1');
+    await db.exercises.add(ex('fly', 'Fly', 'g1', { order: 1 }));
+    const out = await reconcileDraftWithPlan('w1', built!.drafts);
+    expect(out.map((d) => d.exerciseId)).toEqual(['a', 'fly', 'c']);
+    expect(out.map((d) => d.order)).toEqual([0, 1, 2]);
+    // The user's own order wins; the newcomer follows its plan predecessor.
+    const reordered = [built!.drafts[1]!, built!.drafts[0]!];
+    expect((await reconcileDraftWithPlan('w1', reordered)).map((d) => d.exerciseId)).toEqual([
+      'c',
+      'a',
+      'fly',
+    ]);
+  });
+
   it('reconcile never appends an archived exercise', async () => {
     await db.exercises.bulkAdd([ex('a', 'Bench'), ex('b', 'Fly', 'g1', { archivedAt: T })]);
     const built = await buildDraftFromWorkout('w1');

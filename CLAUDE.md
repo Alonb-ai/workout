@@ -216,6 +216,10 @@ Covered by `src/utils/progression.test.ts` and the E2E specs; run both after tou
   old id in `WorkoutDraft.removedExerciseIds` (so restore doesn't re-append it); "גם בתכנית"
   is `swapInPlan` — new exercise takes the old one's group + order, old one is archived.
   A swapped-away card that already holds completed sets is kept, never replaced.
+- **Reorder** (logger "סדר תרגילים" list, or ⋯ → הזז למעלה/למטה) is session-only:
+  `moveDraft` in `features/workout/reorder.ts` renumbers `order`; `WorkoutDraft.reordered`
+  keeps a reorder-only draft alive across reload. Reconcile inserts plan exercises added
+  mid-session after their plan predecessor, never re-sorting the user's order.
 - **Add exercise** in a session is session-only by default; a newly invented one is
   created archived (in the library) unless "להוסיף גם לתכנית" is ticked.
 - **Suggestions** (`src/utils/exerciseCatalog.ts`): muscles are guessed from the name +

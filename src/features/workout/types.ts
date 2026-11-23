@@ -74,6 +74,11 @@ export interface WorkoutDraft {
    * "exercises added to the plan since". Optional: older drafts lack it.
    */
   removedExerciseIds?: ID[];
+  /**
+   * The user reordered exercises in this session. Only marks the draft worth
+   * keeping across a reload; the order itself is the order of `drafts`.
+   */
+  reordered?: boolean;
   startedAt: Timestamp;
   updatedAt: Timestamp;
 }

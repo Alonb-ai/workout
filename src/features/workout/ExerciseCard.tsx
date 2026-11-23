@@ -19,6 +19,8 @@ import {
   IconNote,
   IconStairs,
   IconLink,
+  IconChevronUp,
+  IconChevronDown,
 } from '@/components/Icon';
 import { toast } from '@/store/toast';
 import { formatHebDate } from '@/utils/dates';
@@ -185,6 +187,11 @@ interface Props {
   onSwap?: () => void;
   /** Take the exercise out of the plan for good (archived, history kept). */
   onRetire?: () => void;
+  /** Move this card one slot up / down in today's session (absent at the edge). */
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  /** Open the full reorder list for today's session. */
+  onReorder?: () => void;
 }
 
 export function ExerciseCard({
@@ -197,6 +204,9 @@ export function ExerciseCard({
   onRemove,
   onSwap,
   onRetire,
+  onMoveUp,
+  onMoveDown,
+  onReorder,
 }: Props) {
   const [plateOpen, setPlateOpen] = useState(false);
   const [plateWeight, setPlateWeight] = useState(0);
@@ -569,6 +579,48 @@ export function ExerciseCard({
 
       <Modal open={menuOpen} onClose={() => setMenuOpen(false)} title="פעולות תרגיל">
         <ul className="divide-y divide-line">
+          {(onMoveUp || onMoveDown) && (
+            <li className="flex gap-2 py-2">
+              <button
+                type="button"
+                className="btn-ghost flex-1 justify-center"
+                disabled={!onMoveUp}
+                onClick={() => {
+                  setMenuOpen(false);
+                  onMoveUp?.();
+                }}
+              >
+                <IconChevronUp size={16} /> הזז למעלה
+              </button>
+              <button
+                type="button"
+                className="btn-ghost flex-1 justify-center"
+                disabled={!onMoveDown}
+                onClick={() => {
+                  setMenuOpen(false);
+                  onMoveDown?.();
+                }}
+              >
+                <IconChevronDown size={16} /> הזז למטה
+              </button>
+            </li>
+          )}
+          {onReorder && (
+            <li>
+              <button
+                className="w-full text-right py-3 px-1 hover:bg-ink-800 rounded-lg"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onReorder();
+                }}
+              >
+                סדר תרגילים
+                <span className="block text-2xs text-fg-dim">
+                  שינוי הסדר של כל התרגילים באימון הזה בלבד. התכנית לא משתנה
+                </span>
+              </button>
+            </li>
+          )}
           {onLinkNext && (
             <li>
               <button
