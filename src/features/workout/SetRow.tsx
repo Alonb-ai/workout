@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { NumberInput } from '@/components/NumberInput';
 import type { DraftSet } from './types';
-import { IconCalc, IconCheck, IconTrash, IconX } from '@/components/Icon';
+import { IconCalc, IconCheck, IconDots, IconTrash, IconX } from '@/components/Icon';
+import { motion, useReducedMotion } from 'framer-motion';
 import { cn } from '@/utils/cn';
 
 interface Props {
@@ -41,12 +42,19 @@ export function SetRow({
   // the removed row's expansion onto its replacement. `rpeTouched` only tracks
   // the tap that opens an empty RPE field.
   const [rpeTouched, setRpeTouched] = useState(false);
+  // The plate calculator, RPE and delete are reached for a few times a session,
+  // not every set; they live one tap behind ⋯ so the row is just the numbers
+  // and a ✓ big enough to hit without looking. An RPE that is already set keeps
+  // the strip open, so the value is never hidden.
+  const [toolsTouched, setToolsTouched] = useState(false);
+  const reduceMotion = useReducedMotion();
   const rpeOpen = rpeTouched || (set.rpe !== undefined && set.rpe !== '');
   const typed = set.weight !== '' && set.reps !== '';
   // A set the app has already prescribed can be logged with one tap — the ghost
   // values get written in as real numbers. Only reps are required; 0 kg is a
   // legitimate bodyweight set.
   const canComplete = typed || set.reps !== '' || (set.ghostReps !== undefined && set.ghostReps > 0);
+  const toolsOpen = toolsTouched || rpeOpen;
   const rpeLabel = set.rpe === undefined || set.rpe === '' ? 'RPE' : `R${set.rpe}`;
 
   return (
@@ -92,15 +100,17 @@ export function SetRow({
 
         {/* ✓ sits immediately after the two inputs — it is the one control the
             user reaches for every single set, so it gets the shortest thumb
-            path and the most weight. The secondary trio follows it, dimmed. */}
+            path and the most weight. The rarely-used trio sits behind ⋯. */}
         {/* Three states, no in-between mud. Done: solid green. Typed and ready:
             solid accent. Prescribed but untouched: OUTLINED accent — an invitation,
             not a half-lit version of the real button. `bg-accent/40` over the dark
             surface composited to brown and read as disabled. */}
-        <button
+        <motion.button
           type="button"
+          whileTap={reduceMotion ? undefined : { scale: 0.88 }}
+          transition={{ type: 'spring', stiffness: 600, damping: 30 }}
           className={cn(
-            'btn-icon !min-w-10 !min-h-10 shrink-0 rounded-xl',
+            'btn-icon !min-w-12 !min-h-12 shrink-0 rounded-xl',
             set.completed
               ? 'bg-good text-ink-950 hover:bg-good shadow-soft'
               : typed
@@ -119,55 +129,77 @@ export function SetRow({
           onClick={onComplete}
           disabled={!canComplete && !set.completed}
         >
-          <IconCheck size={18} />
-        </button>
-
-        <button
-          type="button"
-          className="btn-icon !min-w-8 !min-h-9 shrink-0 text-fg-dim hover:text-info"
-          aria-label={`חישוב פלטות · ${suffix}`}
-          onClick={() => {
-            const w = set.weight === '' ? (set.ghostWeight ?? 0) : Number(set.weight);
-            onOpenPlate(w);
-          }}
-        >
-          <IconCalc size={16} />
-        </button>
+          <IconCheck size={22} />
+        </motion.button>
 
         <button
           type="button"
           className={cn(
-            'shrink-0 num text-2xs font-bold rounded-lg px-1.5 h-9 min-w-9 transition-colors',
-            rpeOpen
-              ? 'bg-info-soft text-info'
-              : set.rpe !== undefined && set.rpe !== ''
-                ? 'bg-info-soft/50 text-info'
-                : 'field text-fg-dim',
+            'btn-icon !min-w-9 !min-h-11 shrink-0 text-fg-dim hover:text-fg',
+            toolsOpen && 'text-fg',
           )}
-          aria-label={`ערוך RPE · ${suffix}`}
-          onClick={() => {
-            if (rpeOpen) {
-              setRpeTouched(false);
-              onChange({ ...set, rpe: '' });
-            } else {
-              setRpeTouched(true);
-            }
-          }}
+          aria-label={`עוד · ${suffix}`}
+          aria-expanded={toolsOpen}
+          onClick={() => setToolsTouched((v) => !v)}
         >
-          {rpeLabel}
+          <IconDots size={18} />
         </button>
+      </div>
 
-        {canRemove && (
+      {toolsOpen && (
+        <div className="flex items-center justify-end gap-1.5 px-1.5 pb-1.5">
           <button
             type="button"
-            className="btn-icon !min-w-8 !min-h-9 shrink-0 text-fg-ghost hover:text-bad"
-            aria-label={`מחק · ${suffix}`}
-            onClick={onRemove}
+            className="btn-ghost !min-h-11 !px-3 text-xs text-fg-muted hover:text-info"
+            aria-label={`חישוב פלטות · ${suffix}`}
+            onClick={() => {
+              const w = set.weight === '' ? (set.ghostWeight ?? 0) : Number(set.weight);
+              onOpenPlate(w);
+            }}
           >
-            <IconTrash size={14} />
+            <IconCalc size={16} /> פלטות
           </button>
-        )}
-      </div>
+
+          <button
+            type="button"
+            className={cn(
+              'shrink-0 num text-xs font-bold rounded-xl px-3 h-11 min-w-11 transition-colors',
+              rpeOpen
+                ? 'bg-info-soft text-info'
+                : set.rpe !== undefined && set.rpe !== ''
+                  ? 'bg-info-soft/50 text-info'
+                  : 'field text-fg-dim',
+            )}
+            aria-label={`ערוך RPE · ${suffix}`}
+            onClick={() => {
+              if (rpeOpen) {
+                setRpeTouched(false);
+                onChange({ ...set, rpe: '' });
+              } else {
+                setRpeTouched(true);
+              }
+            }}
+          >
+            {rpeLabel}
+          </button>
+
+          {canRemove && (
+            <button
+              type="button"
+              className="btn-ghost !min-h-11 !px-3 text-xs text-fg-ghost hover:text-bad"
+              aria-label={`מחק · ${suffix}`}
+              onClick={() => {
+                // Rows are keyed by index: the next row reuses this instance, so
+                // close the strip rather than leak it onto the row that moves up.
+                setToolsTouched(false);
+                onRemove();
+              }}
+            >
+              <IconTrash size={14} /> מחק
+            </button>
+          )}
+        </div>
+      )}
 
       {rpeOpen && (
         <div className="flex items-center gap-2 px-2 pb-2 pt-1 border-t border-line/40">

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { hapticTap } from '@/native/haptics';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SetRow } from './SetRow';
@@ -122,437 +123,488 @@ function PrescriptionStrip({
           <p className="mt-0.5 flex items-baseline gap-1.5">
             {prescription.weight > 0 && (
               <>
-                <span className="num-display text-xl leading-none">{prescription.weight}</span>
-                <span className="text-2xs text-fg-muted">{isMachine ? 'סטאק' : 'ק״ג'}</span>
-                <span className="text-fg-ghost">×</span>
-              </>
+                    <span className="num-display text-xl leading-none">{prescription.weight}</span>
+                    <span className="text-2xs text-fg-muted">{isMachine ? 'סטאק' : 'ק״ג'}</span>
+                    <span className="text-fg-ghost">×</span>
+                  </>
+                )}
+                <span className="num-display text-xl leading-none">{formatSetReps(prescription)}</span>
+                <span className="text-2xs text-fg-muted">חזרות</span>
+              </p>
+            ) : (
+              <p className="mt-0.5 text-xs text-fg-muted">קבע משקל התחלה</p>
             )}
-            <span className="num-display text-xl leading-none">{formatSetReps(prescription)}</span>
-            <span className="text-2xs text-fg-muted">חזרות</span>
-          </p>
-        ) : (
-          <p className="mt-0.5 text-xs text-fg-muted">קבע משקל התחלה</p>
-        )}
 
-        {lastSummary && (
-          <p className="mt-1 text-2xs text-fg-dim">
-            קודם <span className="num">{lastSummary}</span>
-          </p>
-        )}
-      </div>
+            {lastSummary && (
+              <p className="mt-1 text-2xs text-fg-dim">
+                קודם <span className="num">{lastSummary}</span>
+              </p>
+            )}
+          </div>
 
-      <IconTarget size={16} className={cn('shrink-0 opacity-40', style.text)} />
-    </div>
-  );
-}
-
-interface TargetForm {
-  targetSets: number;
-  targetRepsMin: number;
-  targetRepsMax: number;
-  defaultRestSec: number;
-}
-
-interface LoadForm {
-  barWeight: number;
-  isMachine: boolean;
-  /** '' means "use the automatic step". */
-  incrementKg: number | '';
-}
-
-/** Planned (non-drop) sets that are ticked. */
-export function doneWorkSets(d: DraftExercise): number {
-  return d.sets.filter((s) => s.completed && !s.isDrop).length;
-}
-
-export interface SupersetInfo {
-  /** Every exercise in the superset, in lineup order (this one included). */
-  members: DraftExercise[];
-  /** This card's position in `members`. */
-  index: number;
-}
-
-interface Props {
-  draft: DraftExercise;
-  /** Set when this card is part of a superset run. */
-  superset?: SupersetInfo;
-  /** Join this exercise and the one below it into a superset. */
-  onLinkNext?: () => void;
-  /** Take this exercise out of its superset. */
-  onUnlink?: () => void;
-  isStalled?: boolean;
-  onChange: (next: DraftExercise) => void;
-  onRemove: () => void;
-  /** Open the swap picker for this exercise. */
-  onSwap?: () => void;
-  /** Take the exercise out of the plan for good (archived, history kept). */
-  onRetire?: () => void;
-  /** Move this card one slot up / down in today's session (absent at the edge). */
-  onMoveUp?: () => void;
-  onMoveDown?: () => void;
-  /** Open the full reorder list for today's session. */
-  onReorder?: () => void;
-}
-
-export function ExerciseCard({
-  draft,
-  superset,
-  onLinkNext,
-  onUnlink,
-  isStalled,
-  onChange,
-  onRemove,
-  onSwap,
-  onRetire,
-  onMoveUp,
-  onMoveDown,
-  onReorder,
-}: Props) {
-  const [plateOpen, setPlateOpen] = useState(false);
-  const [plateWeight, setPlateWeight] = useState(0);
-  const [menuOpen, setMenuOpen] = useState(false);
-  // The edit modals work on their own copy of the values and only write back on
-  // Save. Editing `draft` live made "ביטול" a lie — the change was already in
-  // the session (and already autosaved) by the time the user pressed it.
-  const [targetForm, setTargetForm] = useState<TargetForm | null>(null);
-  const [loadForm, setLoadForm] = useState<LoadForm | null>(null);
-  const [notesOpen, setNotesOpen] = useState(false);
-  const [warmupOpen, setWarmupOpen] = useState(false);
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [renameDraft, setRenameDraft] = useState('');
-  const [renamePersist, setRenamePersist] = useState(false);
-
-  const startTimer = useTimerStore((s) => s.start);
-
-  const completedCount = doneWorkSets(draft);
-
-  const updateSet = (index: number, next: DraftSet) => {
-    const sets = [...draft.sets];
-    sets[index] = next;
-    onChange({ ...draft, sets });
-  };
-
-  /**
-   * Tapping ✓ on an untouched set adopts the prescribed values shown as ghost
-   * text and writes them in as real numbers — the whole point of the
-   * prescription is that a normal set costs exactly one tap. Anything the user
-   * actually typed always wins over the ghost.
-   */
-  const completeSet = (index: number) => {
-    const sets = [...draft.sets];
-    const s = sets[index]!;
-    if (s.completed) {
-      sets[index] = { ...s, completed: false, completedAt: undefined };
-      onChange({ ...draft, sets });
-      return;
-    }
-    const reps = s.reps !== '' ? Number(s.reps) : s.ghostReps;
-    if (reps === undefined || reps <= 0) return; // nothing to log yet
-    const weight = s.weight !== '' ? Number(s.weight) : (s.ghostWeight ?? 0);
-    sets[index] = { ...s, weight, reps, completed: true, completedAt: Date.now() };
-    const next = { ...draft, sets };
-    onChange(next);
-    startRestAfter(next, index);
-  };
-
-  /**
-   * When does rest start? Not between a set and the drop set hanging off it,
-   * and not between exercises of a superset: only once every member has done
-   * this round. Until then, point him at the next exercise in the rotation.
-   */
-  const startRestAfter = (next: DraftExercise, index: number) => {
-    const following = next.sets[index + 1];
-    if (following?.isDrop && !following.completed) return;
-
-    if (superset && superset.members.length > 1) {
-      const mine = doneWorkSets(next);
-      const n = superset.members.length;
-      const rotation = Array.from(
-        { length: n - 1 },
-        (_, k) => superset.members[(superset.index + 1 + k) % n]!,
+          <IconTarget size={16} className={cn('shrink-0 opacity-40', style.text)} />
+        </div>
       );
-      const pending = rotation.find(
-        (p) => doneWorkSets(p) < mine && doneWorkSets(p) < p.sets.filter((x) => !x.isDrop).length,
-      );
-      if (pending) {
-        toast.info(`סופרסט · עכשיו ${pending.exerciseName}`);
-        return;
-      }
-      const rest = Math.max(next.defaultRestSec, ...superset.members.map((m) => m.defaultRestSec));
-      startTimer(rest, 'סופרסט');
-      return;
     }
-    startTimer(next.defaultRestSec, next.exerciseName);
-  };
 
-  const addSet = () => {
-    // A new planned set copies the last planned set, never a drop.
-    const last = [...draft.sets].reverse().find((s) => !s.isDrop);
-    const next: DraftSet = {
-      setNumber: draft.sets.length + 1,
-      weight: '',
-      reps: '',
-      completed: false,
-      ...(last
-        ? {
-            ghostWeight: last.weight === '' ? last.ghostWeight : Number(last.weight),
-            ghostReps: last.reps === '' ? last.ghostReps : Number(last.reps),
+    interface TargetForm {
+      targetSets: number;
+      targetRepsMin: number;
+      targetRepsMax: number;
+      defaultRestSec: number;
+    }
+
+    interface LoadForm {
+      barWeight: number;
+      isMachine: boolean;
+      /** '' means "use the automatic step". */
+      incrementKg: number | '';
+    }
+
+    /** Planned (non-drop) sets that are ticked. */
+    export function doneWorkSets(d: DraftExercise): number {
+      return d.sets.filter((s) => s.completed && !s.isDrop).length;
+    }
+
+    export interface SupersetInfo {
+      /** Every exercise in the superset, in lineup order (this one included). */
+      members: DraftExercise[];
+      /** This card's position in `members`. */
+      index: number;
+    }
+
+    interface Props {
+      draft: DraftExercise;
+      /** Set when this card is part of a superset run. */
+      superset?: SupersetInfo;
+      /** Join this exercise and the one below it into a superset. */
+      onLinkNext?: () => void;
+      /** Take this exercise out of its superset. */
+      onUnlink?: () => void;
+      isStalled?: boolean;
+      onChange: (next: DraftExercise) => void;
+      onRemove: () => void;
+      /** Open the swap picker for this exercise. */
+      onSwap?: () => void;
+      /** Take the exercise out of the plan for good (archived, history kept). */
+      onRetire?: () => void;
+      /** Move this card one slot up / down in today's session (absent at the edge). */
+      onMoveUp?: () => void;
+      onMoveDown?: () => void;
+      /** Open the full reorder list for today's session. */
+      onReorder?: () => void;
+    }
+
+    export function ExerciseCard({
+      draft,
+      superset,
+      onLinkNext,
+      onUnlink,
+      isStalled,
+      onChange,
+      onRemove,
+      onSwap,
+      onRetire,
+      onMoveUp,
+      onMoveDown,
+      onReorder,
+    }: Props) {
+      const [plateOpen, setPlateOpen] = useState(false);
+      const [plateWeight, setPlateWeight] = useState(0);
+      const [menuOpen, setMenuOpen] = useState(false);
+      // The edit modals work on their own copy of the values and only write back on
+      // Save. Editing `draft` live made "ביטול" a lie — the change was already in
+      // the session (and already autosaved) by the time the user pressed it.
+      const [targetForm, setTargetForm] = useState<TargetForm | null>(null);
+      const [loadForm, setLoadForm] = useState<LoadForm | null>(null);
+      const [notesOpen, setNotesOpen] = useState(false);
+      const [warmupOpen, setWarmupOpen] = useState(false);
+      // Focus mode: a lift finished in this sitting folds to one summary line so
+      // the next one is what fills the screen. Only on the tap that finishes it —
+      // a restored draft opens as it was left. Any edit path (summary tap, an
+      // unticked set) opens it again.
+      const [folded, setFolded] = useState(false);
+      const cardRef = useRef<HTMLDivElement>(null);
+      const [renameOpen, setRenameOpen] = useState(false);
+      const [renameDraft, setRenameDraft] = useState('');
+      const [renamePersist, setRenamePersist] = useState(false);
+
+      const startTimer = useTimerStore((s) => s.start);
+
+      const completedCount = doneWorkSets(draft);
+
+      const updateSet = (index: number, next: DraftSet) => {
+        const sets = [...draft.sets];
+        sets[index] = next;
+        onChange({ ...draft, sets });
+      };
+
+      /**
+       * Tapping ✓ on an untouched set adopts the prescribed values shown as ghost
+       * text and writes them in as real numbers — the whole point of the
+       * prescription is that a normal set costs exactly one tap. Anything the user
+       * actually typed always wins over the ghost.
+       */
+      const completeSet = (index: number) => {
+        const sets = [...draft.sets];
+        const s = sets[index]!;
+        if (s.completed) {
+          sets[index] = { ...s, completed: false, completedAt: undefined };
+          onChange({ ...draft, sets });
+          setFolded(false);
+          return;
+        }
+        const reps = s.reps !== '' ? Number(s.reps) : s.ghostReps;
+        if (reps === undefined || reps <= 0) return; // nothing to log yet
+        const weight = s.weight !== '' ? Number(s.weight) : (s.ghostWeight ?? 0);
+        sets[index] = { ...s, weight, reps, completed: true, completedAt: Date.now() };
+        const next = { ...draft, sets };
+        const finished = next.sets.every((x) => x.completed);
+        hapticTap(finished ? 'success' : 'light');
+        onChange(next);
+        if (finished) {
+          setFolded(true);
+          // Bring the next lift up under the thumb once the fold has settled.
+          window.setTimeout(() => {
+            const sib = cardRef.current?.nextElementSibling;
+            if (sib instanceof HTMLElement) {
+              const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+              sib.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+            }
+          }, 220);
+        }
+        startRestAfter(next, index);
+      };
+
+      /**
+       * When does rest start? Not between a set and the drop set hanging off it,
+       * and not between exercises of a superset: only once every member has done
+       * this round. Until then, point him at the next exercise in the rotation.
+       */
+      const startRestAfter = (next: DraftExercise, index: number) => {
+        const following = next.sets[index + 1];
+        if (following?.isDrop && !following.completed) return;
+
+        if (superset && superset.members.length > 1) {
+          const mine = doneWorkSets(next);
+          const n = superset.members.length;
+          const rotation = Array.from(
+            { length: n - 1 },
+            (_, k) => superset.members[(superset.index + 1 + k) % n]!,
+          );
+          const pending = rotation.find(
+            (p) => doneWorkSets(p) < mine && doneWorkSets(p) < p.sets.filter((x) => !x.isDrop).length,
+          );
+          if (pending) {
+            toast.info(`סופרסט · עכשיו ${pending.exerciseName}`);
+            return;
           }
-        : {}),
-    };
-    onChange({ ...draft, sets: [...draft.sets, next] });
-  };
+          const rest = Math.max(next.defaultRestSec, ...superset.members.map((m) => m.defaultRestSec));
+          startTimer(rest, 'סופרסט');
+          return;
+        }
+        startTimer(next.defaultRestSec, next.exerciseName);
+      };
 
-  /**
-   * Add a drop set after the set he is on (or after the drop chain already
-   * hanging off it). Pre-filled with ~80% of that set's weight as a
-   * ghost; reps are left to him — a drop goes to failure, there is no target.
-   */
-  const addDrop = () => {
-    const sets = draft.sets;
-    let anchor = -1;
-    // The set he is on: the last one ticked or typed into.
-    sets.forEach((s, i) => {
-      if (s.completed || s.weight !== '' || s.reps !== '') anchor = i;
-    });
-    if (anchor < 0) anchor = sets.length - 1;
-    while (sets[anchor + 1]?.isDrop) anchor++;
-    const parent = sets[anchor];
-    const parentW =
-      parent === undefined ? 0 : parent.weight !== '' ? Number(parent.weight) : (parent.ghostWeight ?? 0);
-    const step = draft.incrementKg ?? 2.5;
-    const ghost = Math.round(Math.floor((parentW * 0.8) / step + 1e-9) * step * 100) / 100;
-    const row: DraftSet = {
-      setNumber: 0,
-      weight: '',
-      reps: '',
-      completed: false,
-      isDrop: true,
-      ...(ghost > 0 ? { ghostWeight: ghost } : {}),
-    };
-    const next = [...sets.slice(0, anchor + 1), row, ...sets.slice(anchor + 1)].map((s, i) => ({
-      ...s,
-      setNumber: i + 1,
-    }));
-    onChange({ ...draft, sets: next });
-  };
+      const addSet = () => {
+        // A new planned set copies the last planned set, never a drop.
+        const last = [...draft.sets].reverse().find((s) => !s.isDrop);
+        const next: DraftSet = {
+          setNumber: draft.sets.length + 1,
+          weight: '',
+          reps: '',
+          completed: false,
+          ...(last
+            ? {
+                ghostWeight: last.weight === '' ? last.ghostWeight : Number(last.weight),
+                ghostReps: last.reps === '' ? last.ghostReps : Number(last.reps),
+              }
+            : {}),
+        };
+        onChange({ ...draft, sets: [...draft.sets, next] });
+      };
 
-  const removeSet = (index: number) => {
-    if (draft.sets.length <= 1) return;
-    const sets = draft.sets.filter((_, i) => i !== index).map((s, i) => ({
-      ...s,
-      setNumber: i + 1,
-    }));
-    onChange({ ...draft, sets });
-  };
+      /**
+       * Add a drop set after the set he is on (or after the drop chain already
+       * hanging off it). Pre-filled with ~80% of that set's weight as a
+       * ghost; reps are left to him — a drop goes to failure, there is no target.
+       */
+      const addDrop = () => {
+        const sets = draft.sets;
+        let anchor = -1;
+        // The set he is on: the last one ticked or typed into.
+        sets.forEach((s, i) => {
+          if (s.completed || s.weight !== '' || s.reps !== '') anchor = i;
+        });
+        if (anchor < 0) anchor = sets.length - 1;
+        while (sets[anchor + 1]?.isDrop) anchor++;
+        const parent = sets[anchor];
+        const parentW =
+          parent === undefined ? 0 : parent.weight !== '' ? Number(parent.weight) : (parent.ghostWeight ?? 0);
+        const step = draft.incrementKg ?? 2.5;
+        const ghost = Math.round(Math.floor((parentW * 0.8) / step + 1e-9) * step * 100) / 100;
+        const row: DraftSet = {
+          setNumber: 0,
+          weight: '',
+          reps: '',
+          completed: false,
+          isDrop: true,
+          ...(ghost > 0 ? { ghostWeight: ghost } : {}),
+        };
+        const next = [...sets.slice(0, anchor + 1), row, ...sets.slice(anchor + 1)].map((s, i) => ({
+          ...s,
+          setNumber: i + 1,
+        }));
+        onChange({ ...draft, sets: next });
+      };
 
-  const incomplete = completedCount < draft.targetSets;
+      const removeSet = (index: number) => {
+        if (draft.sets.length <= 1) return;
+        const sets = draft.sets.filter((_, i) => i !== index).map((s, i) => ({
+          ...s,
+          setNumber: i + 1,
+        }));
+        onChange({ ...draft, sets });
+      };
 
-  // Planned sets are numbered 1..n; a drop set shows as "דרופ" under its set.
-  let ordinal = 0;
-  const ordinals = draft.sets.map((s) => (s.isDrop ? null : ++ordinal));
+      const incomplete = completedCount < draft.targetSets;
 
-  const workWeight = (() => {
-    const typed = draft.sets.find((s) => !s.isDrop && s.weight !== '');
-    if (typed) return Number(typed.weight);
-    return draft.prescription?.weight ?? draft.sets[0]?.ghostWeight ?? 0;
-  })();
+      // Planned sets are numbered 1..n; a drop set shows as "דרופ" under its set.
+      let ordinal = 0;
+      const ordinals = draft.sets.map((s) => (s.isDrop ? null : ++ordinal));
 
-  const hasNotes = !!(draft.notes || draft.lastNote || draft.sessionNote?.trim());
+      const workWeight = (() => {
+        const typed = draft.sets.find((s) => !s.isDrop && s.weight !== '');
+        if (typed) return Number(typed.weight);
+        return draft.prescription?.weight ?? draft.sets[0]?.ghostWeight ?? 0;
+      })();
 
-  return (
-    // No `layout` prop: this card re-renders on every keystroke, and layout
-    // animation made framer measure and tween all six cards each time — the
-    // whole list visibly floated on every tap. A short fade is the only
-    // entrance this needs.
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.18, ease: 'easeOut' }}
-      className="card overflow-hidden"
-    >
-      <div className="px-3 py-2.5 flex items-center gap-2 border-b border-line/60">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
-            <h3 className="font-bold leading-tight line-clamp-2 break-words">{draft.exerciseName}</h3>
-            {isStalled && (
-              <span className="chip border-warn/40 text-warn bg-warn-soft" title="תקוע 3 אימונים">
-                <IconWarn size={11} /> תקוע
-              </span>
-            )}
+      const isFolded = folded && draft.sets.length > 0 && draft.sets.every((x) => x.completed);
+      // "67.5×5,5,4" per weight, in set order — the same shorthand as "קודם" on
+      // the prescription strip, so a folded card reads like last time's line.
+      const foldSummary = (() => {
+        const groups: { w: number; reps: number[] }[] = [];
+        for (const x of draft.sets) {
+          const w = Number(x.weight);
+          const r = Number(x.reps);
+          const last = groups[groups.length - 1];
+          if (last && last.w === w) last.reps.push(r);
+          else groups.push({ w, reps: [r] });
+        }
+        return groups.map((g) => `${g.w}×${g.reps.join(',')}`).join(' · ');
+      })();
+
+      const hasNotes = !!(draft.notes || draft.lastNote || draft.sessionNote?.trim());
+
+      return (
+        // No `layout` prop: this card re-renders on every keystroke, and layout
+        // animation made framer measure and tween all six cards each time — the
+        // whole list visibly floated on every tap. A short fade is the only
+        // entrance this needs.
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.18, ease: 'easeOut' }}
+          className="card overflow-hidden scroll-mt-3"
+          ref={cardRef}
+        >
+          <div className="px-3 py-2.5 flex items-center gap-2 border-b border-line/60">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h3 className="font-bold leading-tight line-clamp-2 break-words">{draft.exerciseName}</h3>
+                {isStalled && (
+                  <span className="chip border-warn/40 text-warn bg-warn-soft" title="תקוע 3 אימונים">
+                    <IconWarn size={11} /> תקוע
+                  </span>
+                )}
+              </div>
+              <p className="text-2xs text-fg-muted">
+                {draft.muscleGroupName} · {draft.targetSets}×{draft.targetRepsMin}-{draft.targetRepsMax}
+                {' '}· מנוחה {formatHM(draft.defaultRestSec)}
+                {draft.isMachine && ' · מכונה'}
+              </p>
+              {superset && (
+                <p className="text-2xs text-accent-text flex items-center gap-1">
+                  <IconLink size={11} /> סופרסט {superset.index + 1}/{superset.members.length}
+                </p>
+              )}
+            </div>
+            {/* Turns green the moment the exercise is finished — the card's own
+                "done" signal, so the user can scan the list rather than count. */}
+            <span
+              className={cn(
+                'num-display shrink-0 text-sm px-2 py-0.5 rounded-lg',
+                completedCount === 0
+                  ? 'field text-fg-dim'
+                  : completedCount >= draft.targetSets
+                    ? 'bg-good-soft text-good'
+                    : 'field text-accent-text',
+              )}
+            >
+              {completedCount}/{draft.targetSets}
+            </span>
+            <button
+              type="button"
+              className={cn(
+                'btn-icon !min-w-10 !min-h-11',
+                hasNotes ? 'text-accent-text' : 'text-fg-dim hover:text-accent-text',
+              )}
+              aria-label="הערות לתרגיל"
+              onClick={() => setNotesOpen(true)}
+            >
+              <IconNote size={18} />
+            </button>
+            <Link
+              to={`/workout/exercise/${draft.exerciseId}/history`}
+              className="btn-icon !min-w-10 !min-h-11 text-fg-dim hover:text-info"
+              aria-label="היסטוריה"
+            >
+              <IconChart size={18} />
+            </Link>
+            <button
+              type="button"
+              className="btn-icon !min-w-9 !min-h-9"
+              aria-label="פעולות"
+              onClick={() => setMenuOpen(true)}
+            >
+              <IconDots size={18} />
+            </button>
           </div>
-          <p className="text-2xs text-fg-muted">
-            {draft.muscleGroupName} · {draft.targetSets}×{draft.targetRepsMin}-{draft.targetRepsMax}
-            {' '}· מנוחה {formatHM(draft.defaultRestSec)}
-            {draft.isMachine && ' · מכונה'}
-          </p>
-          {superset && (
-            <p className="text-2xs text-accent-text flex items-center gap-1">
-              <IconLink size={11} /> סופרסט {superset.index + 1}/{superset.members.length}
-            </p>
-          )}
-        </div>
-        {/* Turns green the moment the exercise is finished — the card's own
-            "done" signal, so the user can scan the list rather than count. */}
-        <span
-          className={cn(
-            'num-display shrink-0 text-sm px-2 py-0.5 rounded-lg',
-            completedCount === 0
-              ? 'field text-fg-dim'
-              : completedCount >= draft.targetSets
-                ? 'bg-good-soft text-good'
-                : 'field text-accent-text',
-          )}
-        >
-          {completedCount}/{draft.targetSets}
-        </span>
-        <button
-          type="button"
-          className={cn(
-            'btn-icon !min-w-9 !min-h-9',
-            hasNotes ? 'text-accent-text' : 'text-fg-dim hover:text-accent-text',
-          )}
-          aria-label="הערות לתרגיל"
-          onClick={() => setNotesOpen(true)}
-        >
-          <IconNote size={18} />
-        </button>
-        <Link
-          to={`/workout/exercise/${draft.exerciseId}/history`}
-          className="btn-icon !min-w-9 !min-h-9 text-fg-dim hover:text-info"
-          aria-label="היסטוריה"
-        >
-          <IconChart size={18} />
-        </Link>
-        <button
-          type="button"
-          className="btn-icon !min-w-9 !min-h-9"
-          aria-label="פעולות"
-          onClick={() => setMenuOpen(true)}
-        >
-          <IconDots size={18} />
-        </button>
-      </div>
 
-      {hasNotes && (
-        <button
-          type="button"
-          onClick={() => setNotesOpen(true)}
-          className="relative block w-full text-right px-3 py-2 bg-ink-800/40 border-b border-line/60 space-y-0.5"
-          aria-label="פתח הערות"
-        >
-          <span className="absolute inset-y-0 start-0 w-[3px] bg-accent/70" aria-hidden />
-          {draft.notes && (
-            <p className="text-xs text-fg whitespace-pre-wrap line-clamp-3">
-              <IconNote size={12} className="inline -mt-0.5 me-1 text-accent-text" />
-              {draft.notes}
-            </p>
+          {isFolded ? (
+            <button
+              type="button"
+              onClick={() => setFolded(false)}
+              className="w-full flex items-center gap-2 px-3 min-h-12 text-right bg-good/[0.06] relative"
+              aria-label={`הצג סטים · ${draft.exerciseName}`}
+            >
+              <span className="absolute inset-y-0 start-0 w-[3px] bg-good" aria-hidden />
+              <IconCheck size={16} className="text-good shrink-0" />
+              <span className="flex-1 min-w-0 num text-sm text-fg truncate">{foldSummary}</span>
+              <span className="text-2xs text-fg-muted shrink-0">הצג</span>
+            </button>
+          ) : (
+            <>
+          {hasNotes && (
+            <button
+              type="button"
+              onClick={() => setNotesOpen(true)}
+              className="relative block w-full text-right px-3 py-2 bg-ink-800/40 border-b border-line/60 space-y-0.5"
+              aria-label="פתח הערות"
+            >
+              <span className="absolute inset-y-0 start-0 w-[3px] bg-accent/70" aria-hidden />
+              {draft.notes && (
+                <p className="text-xs text-fg whitespace-pre-wrap line-clamp-3">
+                  <IconNote size={12} className="inline -mt-0.5 me-1 text-accent-text" />
+                  {draft.notes}
+                </p>
+              )}
+              {draft.lastNote && (
+                <p className="text-2xs text-fg-muted whitespace-pre-wrap line-clamp-2">
+                  <span className="text-fg-dim">פעם קודמת ({formatHebDate(draft.lastNote.date)}): </span>
+                  {draft.lastNote.text}
+                </p>
+              )}
+              {draft.sessionNote?.trim() && (
+                <p className="text-2xs text-info whitespace-pre-wrap line-clamp-2">
+                  <span className="text-fg-dim">היום: </span>
+                  {draft.sessionNote}
+                </p>
+              )}
+            </button>
           )}
-          {draft.lastNote && (
-            <p className="text-2xs text-fg-muted whitespace-pre-wrap line-clamp-2">
-              <span className="text-fg-dim">פעם קודמת ({formatHebDate(draft.lastNote.date)}): </span>
-              {draft.lastNote.text}
-            </p>
-          )}
-          {draft.sessionNote?.trim() && (
-            <p className="text-2xs text-info whitespace-pre-wrap line-clamp-2">
-              <span className="text-fg-dim">היום: </span>
-              {draft.sessionNote}
-            </p>
-          )}
-        </button>
-      )}
 
-      {draft.prescription && (
-        <PrescriptionStrip
-          prescription={draft.prescription}
-          lastSummary={draft.lastSummary}
-          isMachine={draft.isMachine}
-        />
-      )}
-
-      <div className="px-2 pt-1 pb-2">
-        <div className="flex items-center gap-1.5 px-1.5 pb-1 text-2xs text-fg-muted">
-          <span className="w-5 shrink-0" />
-          <div className="flex-1 min-w-0 grid grid-cols-2 gap-1.5">
-            <span className="text-center">משקל (נטו kg)</span>
-            <span className="text-center">חזרות</span>
-          </div>
-          {/* spacers align with the row's action buttons (calc · ✓ · RPE) */}
-          <span className="w-8 shrink-0" />
-          <span className="w-9 shrink-0" />
-          <span className="w-9 shrink-0" />
-        </div>
-
-        <div className="space-y-1.5">
-          {draft.sets.map((s, i) => (
-            <SetRow
-              key={i}
-              set={s}
-              index={i}
-              ordinal={ordinals[i] ?? null}
-              exerciseName={draft.exerciseName}
-              canRemove={draft.sets.length > 1}
-              onChange={(n) => updateSet(i, n)}
-              onComplete={() => completeSet(i)}
-              onRemove={() => removeSet(i)}
-              onOpenPlate={(w) => {
-                setPlateWeight(w);
-                setPlateOpen(true);
-              }}
+          {draft.prescription && (
+            <PrescriptionStrip
+              prescription={draft.prescription}
+              lastSummary={draft.lastSummary}
+              isMachine={draft.isMachine}
             />
-          ))}
-        </div>
+          )}
 
-        <div className="flex items-center justify-between mt-2 pt-2 border-t border-line/60">
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={addSet}
-              className="btn-subtle !min-h-9 !px-2 text-xs"
-            >
-              <IconPlus size={16} /> הוסף סט
-            </button>
-            <button
-              type="button"
-              onClick={addDrop}
-              className="btn-subtle !min-h-9 !px-2 text-xs"
-              aria-label={`הוסף דרופ סט · ${draft.exerciseName}`}
-            >
-              <IconPlus size={14} /> דרופ
-            </button>
+          <div className="px-2 pt-1 pb-2">
+            <div className="flex items-center gap-1.5 px-1.5 pb-1 text-2xs text-fg-muted">
+              <span className="w-5 shrink-0" />
+              <div className="flex-1 min-w-0 grid grid-cols-2 gap-1.5">
+                <span className="text-center">משקל (נטו kg)</span>
+                <span className="text-center">חזרות</span>
+              </div>
+              {/* spacers align with the row's ✓ and ⋯ */}
+              <span className="w-12 shrink-0" />
+              <span className="w-9 shrink-0" />
+            </div>
+
+            <div className="space-y-1.5">
+              {draft.sets.map((s, i) => (
+                <SetRow
+                  key={i}
+                  set={s}
+                  index={i}
+                  ordinal={ordinals[i] ?? null}
+                  exerciseName={draft.exerciseName}
+                  canRemove={draft.sets.length > 1}
+                  onChange={(n) => updateSet(i, n)}
+                  onComplete={() => completeSet(i)}
+                  onRemove={() => removeSet(i)}
+                  onOpenPlate={(w) => {
+                    setPlateWeight(w);
+                    setPlateOpen(true);
+                  }}
+                />
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between mt-2 pt-2 border-t border-line/60">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={addSet}
+                  className="btn-subtle !min-h-11 !px-2 text-xs"
+                >
+                  <IconPlus size={16} /> הוסף סט
+                </button>
+                <button
+                  type="button"
+                  onClick={addDrop}
+                  className="btn-subtle !min-h-11 !px-2 text-xs"
+                  aria-label={`הוסף דרופ סט · ${draft.exerciseName}`}
+                >
+                  <IconPlus size={14} /> דרופ
+                </button>
+              </div>
+              <div className="flex items-center gap-1">
+                {/* Only once he has actually started this lift. Flagging "חסר" on a
+                    card he has not touched yet is nagging, not information — the
+                    0/5 counter in the header already says it is untouched. */}
+                {incomplete && completedCount > 0 && (
+                  <span className="chip border-warn/30 text-warn bg-warn/[0.07]">
+                    <IconWarn size={11} /> חסר
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="btn-subtle !min-h-11 !px-2 text-xs"
+                  aria-label={`חימום · ${draft.exerciseName}`}
+                  onClick={() => setWarmupOpen(true)}
+                >
+                  <IconStairs size={16} /> חימום
+                </button>
+                <button
+                  type="button"
+                  className="btn-subtle !min-h-11 !px-2 text-xs"
+                  onClick={() => {
+                    const w = draft.sets.find((s) => s.weight !== '')?.weight ?? draft.sets[0]?.ghostWeight ?? 0;
+                    setPlateWeight(typeof w === 'number' ? w : 0);
+                    setPlateOpen(true);
+                  }}
+                >
+                  <IconCalc size={16} /> פלטות
+                </button>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            {/* Only once he has actually started this lift. Flagging "חסר" on a
-                card he has not touched yet is nagging, not information — the
-                0/5 counter in the header already says it is untouched. */}
-            {incomplete && completedCount > 0 && (
-              <span className="chip border-warn/30 text-warn bg-warn/[0.07]">
-                <IconWarn size={11} /> חסר
-              </span>
-            )}
-            <button
-              type="button"
-              className="btn-subtle !min-h-9 !px-2 text-xs"
-              aria-label={`חימום · ${draft.exerciseName}`}
-              onClick={() => setWarmupOpen(true)}
-            >
-              <IconStairs size={16} /> חימום
-            </button>
-            <button
-              type="button"
-              className="btn-subtle !min-h-9 !px-2 text-xs"
-              onClick={() => {
-                const w = draft.sets.find((s) => s.weight !== '')?.weight ?? draft.sets[0]?.ghostWeight ?? 0;
-                setPlateWeight(typeof w === 'number' ? w : 0);
-                setPlateOpen(true);
-              }}
-            >
-              <IconCalc size={16} /> פלטות
-            </button>
-          </div>
-        </div>
-      </div>
+        </>
+      )}
 
       <PlateCalcModal
         open={plateOpen}

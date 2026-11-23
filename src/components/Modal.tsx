@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion, useDragControls, useReducedMotion } from 'framer-motion';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { IconX } from './Icon';
@@ -35,6 +35,10 @@ export function Modal({
   size = 'md',
 }: ModalProps) {
   const ref = useRef<HTMLDivElement>(null);
+  // Swipe the sheet down by its header to dismiss, as on iOS. The drag starts
+  // only from the header so the body's own scrolling is never hijacked.
+  const dragControls = useDragControls();
+  const reduceMotion = useReducedMotion();
 
   // Body-scroll lock — depends only on `open` so it doesn't churn on parent re-render.
   useEffect(() => {
@@ -107,15 +111,32 @@ export function Modal({
               maxW,
             )}
             style={{ paddingBottom: 'var(--safe-bottom)' }}
-            initial={{ y: 32, opacity: 0 }}
+            initial={reduceMotion ? { opacity: 0 } : { y: 48, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 24, opacity: 0 }}
-            transition={{ duration: 0.2, ease: 'easeOut' }}
+            exit={reduceMotion ? { opacity: 0 } : { y: 48, opacity: 0 }}
+            transition={
+              reduceMotion
+                ? { duration: 0.12 }
+                : { type: 'spring', stiffness: 520, damping: 40, mass: 0.8 }
+            }
+            drag={hideClose ? false : 'y'}
+            dragListener={false}
+            dragControls={dragControls}
+            dragConstraints={{ top: 0, bottom: 0 }}
+            dragElastic={{ top: 0, bottom: 0.7 }}
+            onDragEnd={(_, info) => {
+              if (info.offset.y > 120 || info.velocity.y > 600) onClose();
+            }}
           >
-            <div className="shrink-0 border-b border-line/70">
+            <div
+              className="shrink-0 border-b border-line/70 touch-none"
+              onPointerDown={(e) => {
+                if (!hideClose) dragControls.start(e);
+              }}
+            >
               {/* Grab handle: says "this sheet came from the bottom edge". */}
               <div className="flex justify-center pt-2 sm:hidden" aria-hidden="true">
-                <span className="h-1 w-9 rounded-full bg-ink-600" />
+                <span className="h-1 w-10 rounded-full bg-ink-600" />
               </div>
               <div className="flex items-center gap-2 px-4 py-3">
                 <div className="min-w-0 flex-1 text-base font-bold leading-tight">{title}</div>

@@ -6,8 +6,7 @@ import {
   finishAndSave,
   weightBox,
   repsBox,
-  failOnConsoleErrors,
-} from './helpers';
+  failOnConsoleErrors, pickWorkout } from './helpers';
 
 /**
  * The active logger, from the owner's chair. Everything here is something he
@@ -32,6 +31,10 @@ const setRows = (page: Page, exercise = BENCH) =>
 
 const removeSetButton = (page: Page, set: number, exercise = BENCH) =>
   page.getByLabel(`מחק · ${exercise} · סט ${set}`);
+
+/** The row's ⋯ — plate calc, RPE and delete sit behind it. */
+const rowMore = (page: Page, set: number, exercise = BENCH) =>
+  page.getByLabel(`עוד · ${exercise} · סט ${set}`);
 
 const rpeChip = (page: Page, set: number, exercise = BENCH) =>
   page.getByLabel(`ערוך RPE · ${exercise} · סט ${set}`);
@@ -87,6 +90,7 @@ test('an extra set and a deleted set both survive backgrounding + reload', async
   await logSet(page, 3, '65', '3');
 
   // Row 2 was a mis-tap — delete it. Rows renumber and the values shift up.
+  await rowMore(page, 2).click();
   await removeSetButton(page, 2).click();
   await expect(setRows(page)).toHaveCount(5);
   await expect(weightBox(page, 2)).toHaveValue('65');
@@ -95,7 +99,7 @@ test('an extra set and a deleted set both survive backgrounding + reload', async
 
   await backgroundApp(page);
   await page.reload();
-  await page.getByRole('button', { name: 'UA', exact: true }).click();
+  await pickWorkout(page, 'UA');
   await expect(page.getByText('המשך טיוטה')).toBeVisible();
 
   await expect(setRows(page)).toHaveCount(5);
@@ -203,7 +207,7 @@ test('each workout tab keeps its own draft and nothing leaks between them', asyn
   await logSet(page, 2, '60', '5');
 
   // Jump to Lower A mid-session.
-  await page.getByRole('button', { name: 'LA', exact: true }).click();
+  await pickWorkout(page, 'LA');
   await expect(page.getByRole('heading', { name: LEGPRESS })).toBeVisible();
   await expect(page.getByText('0 / 22 סטים')).toBeVisible();
   await expect(weightBox(page, 1, LEGPRESS)).toHaveValue('');
@@ -211,7 +215,7 @@ test('each workout tab keeps its own draft and nothing leaks between them', asyn
   await expect(page.getByText('1 / 22 סטים')).toBeVisible();
 
   // Back to Upper A — its two sets are exactly where they were.
-  await page.getByRole('button', { name: 'UA', exact: true }).click();
+  await pickWorkout(page, 'UA');
   await expect(page.getByRole('heading', { name: BENCH })).toBeVisible();
   await expect(page.getByText('2 / 21 סטים')).toBeVisible();
   await expect(weightBox(page, 1)).toHaveValue('60');
@@ -220,10 +224,10 @@ test('each workout tab keeps its own draft and nothing leaks between them', asyn
   // Both drafts survive a reload, independently.
   await backgroundApp(page);
   await page.reload();
-  await page.getByRole('button', { name: 'LA', exact: true }).click();
+  await pickWorkout(page, 'LA');
   await expect(weightBox(page, 1, LEGPRESS)).toHaveValue('100');
   await expect(repsBox(page, 1, LEGPRESS)).toHaveValue('6');
-  await page.getByRole('button', { name: 'UA', exact: true }).click();
+  await pickWorkout(page, 'UA');
   await expect(weightBox(page, 1)).toHaveValue('60');
   await expect(page.getByText('2 / 21 סטים')).toBeVisible();
   expect(errors).toEqual([]);
@@ -255,7 +259,7 @@ test('a lift can be pulled in from another workout and a brand-new one invented'
   await logSet(page, 1, '20', '8', INVENTED);
   await backgroundApp(page);
   await page.reload();
-  await page.getByRole('button', { name: 'UA', exact: true }).click();
+  await pickWorkout(page, 'UA');
   await expect(page.getByRole('heading', { name: 'Cable Row' })).toBeVisible();
   await expect(weightBox(page, 1, INVENTED)).toHaveValue('20');
   expect(errors).toEqual([]);
@@ -300,7 +304,7 @@ test('saving with nothing ticked is refused, and "התחל מחדש" really wipe
 
   // Gone from storage, not just from the screen.
   await page.reload();
-  await page.getByRole('button', { name: 'UA', exact: true }).click();
+  await pickWorkout(page, 'UA');
   await expect(weightBox(page, 1)).toHaveValue('');
   await expect(page.getByText('המשך טיוטה')).toHaveCount(0);
 });
@@ -313,17 +317,18 @@ test('ticking a set starts the named rest timer, and RPE is kept per set', async
   await expect(restBar(page)).toContainText(BENCH);
   await expect(restBar(page)).toContainText(/[0-9]:[0-9]{2}/);
 
+  await rowMore(page, 1).click();
   await rpeChip(page, 1).click();
   await page.getByLabel('RPE', { exact: true }).fill('8.5');
   await expect(rpeChip(page, 1)).toHaveText('R8.5');
-  await expect(rpeChip(page, 2)).toHaveText('RPE'); // and it stays on its own row
+  await expect(rpeChip(page, 2)).toHaveCount(0); // and it stays on its own row
 
   await page.getByRole('button', { name: 'דלג' }).click();
   await expect(page.getByRole('button', { name: 'דלג' })).toHaveCount(0);
 
   await backgroundApp(page);
   await page.reload();
-  await page.getByRole('button', { name: 'UA', exact: true }).click();
+  await pickWorkout(page, 'UA');
   await expect(rpeChip(page, 1)).toHaveText('R8.5');
 });
 

@@ -4,8 +4,7 @@ import {
   openWorkout,
   logSet,
   finishAndSave,
-  failOnConsoleErrors,
-} from './helpers';
+  failOnConsoleErrors, progressTab } from './helpers';
 
 /**
  * Everything that reads history back: the per-exercise history page, the
@@ -42,6 +41,7 @@ async function openExerciseHistory(page: Page, exercise: string) {
 /** Newest session in the journal. */
 async function openNewestSession(page: Page) {
   await page.goto('/#/progress');
+  await progressTab(page, 'יומן');
   await page.locator('a[href*="/progress/session/"]').first().click();
   await expect(page.getByText('חזרה ליומן')).toBeVisible();
 }
@@ -116,6 +116,7 @@ test('editing a set rewrites the session volume, score and PR count — and it s
   await expect(stat(page, 'ציון')).toHaveText('60');
   // …and the journal agrees with the detail page.
   await page.goto('/#/progress');
+  await progressTab(page, 'יומן');
   await expect(page.getByText('1,700kg נפח')).toBeVisible();
   expect(errors).toEqual([]);
 });
@@ -217,6 +218,7 @@ test('two sessions of the same workout on one day are both kept and scored again
   await benchSession(page, daysAgo(0), '70'); // 1750 kg, same date
 
   await page.goto('/#/progress');
+  await progressTab(page, 'יומן');
   const cards = page.locator('a[href*="/progress/session/"]');
   await expect(cards).toHaveCount(2);
   // Newest first, and the second one is scored against the first (ratio 1.167).
@@ -287,13 +289,16 @@ test('the strength index climbs with weight × reps and the per-exercise list sh
   await page.goto('/#/progress');
   // Mean Epley at 60 kg: 5 reps → 70, 6 reps → 72 → +2.9 %.
   await expect(page.getByText('+2.9%').first()).toBeVisible();
+  await progressTab(page, 'תרגילים');
   const row = page.getByRole('link', { name: `היסטוריה: ${BENCH}` });
   await expect(row).toContainText('60 × 6/6/6/6/6');
   await expect(row).toContainText('עולה');
   // The journal row carries the session's strength change next to its score.
+  await progressTab(page, 'יומן');
   await expect(page.locator('a[href*="/progress/session/"]').first()).toContainText('כוח +2.9%');
 
   // The AI card can always show the brief it would send.
+  await progressTab(page, 'סקירה');
   await page.getByRole('button', { name: 'הצג טקסט' }).click();
   await expect(page.getByLabel('טקסט הניתוח')).toHaveValue(/60 × 6\/6\/6\/6\/6/);
   expect(errors).toEqual([]);

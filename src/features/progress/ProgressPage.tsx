@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { db } from '@/db/db';
 import { Section } from '@/components/Section';
 import { EmptyState } from '@/components/EmptyState';
@@ -116,6 +116,15 @@ function SessionChange({ pct }: { pct: number }) {
   );
 }
 
+const JOURNAL_PAGE = 12;
+
+type ProgressTab = 'overview' | 'exercises' | 'journal';
+const TABS: { key: ProgressTab; label: string }[] = [
+  { key: 'overview', label: 'סקירה' },
+  { key: 'exercises', label: 'תרגילים' },
+  { key: 'journal', label: 'יומן' },
+];
+
 export function ProgressPage() {
   const sessions =
     useLiveQuery(() => db.sessions.filter((s) => s.status === 'completed').toArray(), []) ?? [];
@@ -147,6 +156,13 @@ export function ProgressPage() {
   }, [sessions.length]);
 
   const [period, setPeriod] = useState<Period>('quarter');
+  // One long page (index, AI, every lift, muscle volume, the whole journal) was
+  // ~16 phone screens. Three tabs, each about one question.
+  // Kept in the URL (?tab=journal) so "back" from a session lands on the
+  // journal, and saving a workout can open straight onto it.
+  const [params, setParams] = useSearchParams();
+  const tab: ProgressTab = TABS.find((t) => t.key === params.get('tab'))?.key ?? 'overview';
+  const setTab = (t: ProgressTab) => setParams(t === 'overview' ? {} : { tab: t }, { replace: true });
   const since = sinceFor(period);
   const periodInfo = PERIODS.find((p) => p.key === period)!;
 
@@ -201,9 +217,12 @@ export function ProgressPage() {
   const maxMuscleVol = volumeByMuscle?.[0]?.vol ?? 0;
 
   // Journal grouped by month — a flat list of 60 rows has no landmarks.
+  // The journal held every session ever — 16 screens of scroll on a phone.
+  // Newest first, a page at a time.
+  const [journalLimit, setJournalLimit] = useState(JOURNAL_PAGE);
   const months = useMemo(() => {
     const out: { key: string; label: string; items: typeof sorted }[] = [];
-    for (const s of sorted) {
+    for (const s of sorted.slice(0, journalLimit)) {
       const key = s.date.slice(0, 7);
       const last = out[out.length - 1];
       if (last && last.key === key) last.items.push(s);
@@ -215,7 +234,7 @@ export function ProgressPage() {
         });
     }
     return out;
-  }, [sorted]);
+  }, [sorted, journalLimit]);
 
   return (
     <div className="pt-3">
@@ -242,7 +261,24 @@ export function ProgressPage() {
         />
       ) : (
         <>
-          <div className="seg !flex w-full mb-3" role="tablist" aria-label="תקופה">
+          <div className="seg !flex w-full mb-3" role="tablist" aria-label="תצוגה">
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={t.key === tab}
+                data-active={t.key === tab}
+                className="pill-tab flex-1 !min-h-10"
+                onClick={() => setTab(t.key)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {tab !== 'journal' && (
+          <div className="seg !flex w-full mb-3 max-w-xs" role="tablist" aria-label="תקופה">
             {PERIODS.map((p) => (
               <button
                 key={p.key}
@@ -250,14 +286,19 @@ export function ProgressPage() {
                 role="tab"
                 aria-selected={p.key === period}
                 data-active={p.key === period}
-                className="pill-tab flex-1"
+                // Secondary to the view tabs above: a quiet filter, not a second
+                // orange switch competing with the first.
+                className="pill-tab flex-1 !py-1 text-xs data-[active=true]:!bg-ink-700 data-[active=true]:!text-fg data-[active=true]:!border-line data-[active=true]:!shadow-none"
                 onClick={() => setPeriod(p.key)}
               >
                 {p.label}
               </button>
             ))}
           </div>
+          )}
 
+          {tab === 'overview' && (
+          <>
           <section className="card overflow-hidden mb-5">
             {/* The screen's headline: is the user getting stronger? Each exercise
                 is measured against itself (weight × reps), so a skipped lift
@@ -339,6 +380,11 @@ export function ProgressPage() {
             sessionCount={indexSeries.length}
             periodLabel={periodInfo.phrase}
           />
+          </>
+          )}
+
+          {tab === 'exercises' && (
+          <>
 
           {trends.length > 0 && (
             <Section
@@ -377,6 +423,10 @@ export function ProgressPage() {
             </Section>
           )}
 
+          </>
+          )}
+
+          {tab === 'journal' && (
           <Section title="יומן אימונים">
             <div className="space-y-4">
               {months.map((group) => (
@@ -434,8 +484,18 @@ export function ProgressPage() {
                   </ul>
                 </div>
               ))}
+              {sorted.length > journalLimit && (
+                <button
+                  type="button"
+                  className="btn-ghost w-full !min-h-11 text-sm"
+                  onClick={() => setJournalLimit((n) => n + JOURNAL_PAGE)}
+                >
+                  הצג עוד ({sorted.length - journalLimit})
+                </button>
+              )}
             </div>
           </Section>
+          )}
         </>
       )}
     </div>

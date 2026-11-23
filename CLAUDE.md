@@ -290,6 +290,21 @@ fonts.googleapis.com.
 `layout` prop on a component that re-renders while the user types — it made
 framer measure and tween all six exercise cards on every keystroke.
 
+**Gym-first layout (2026-11-23 redesign).** Whatever is touched every set sits in
+the thumb zone. `WorkoutDock` pins progress + "סיים ושמור" above the tab bar and
+publishes `--dock-h`, which `.pb-tabbar*` and the rest timer bar add to their
+offsets. A set row is #, weight, reps, a 48px ✓ and a ⋯ that opens plate calc /
+RPE / delete (an RPE already set keeps that strip open). A card whose every set
+was ticked *in this sitting* folds to a summary line and scrolls the next card
+up; unticking or tapping the line opens it. ✓ fires `hapticTap` (`native/haptics.ts`,
+@capacitor/haptics in the app, `navigator.vibrate` on the web). Sheets (`Modal`)
+spring in and dismiss by dragging the header down. The logger header is one row
+(name, date, "החלף אימון" → a sheet of workout buttons named by code; E2E uses
+`pickWorkout`). Progress has three tabs kept in `?tab=` (סקירה / תרגילים / יומן;
+saving a workout and "חזרה ליומן" open `?tab=journal`; E2E uses `progressTab`),
+and the journal pages 12 at a time. UI/UX skills for this work
+live in `.claude/skills` (web-design-guidelines, apple-design, ui-ux-pro-max, hig-*).
+
 **Accessible names are an API.** 51 Playwright tests find controls by their
 Hebrew `aria-label` and visible button text. Restyling is free; renaming a
 control is a breaking change.

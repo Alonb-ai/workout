@@ -9,8 +9,7 @@ import {
   finishAndSave,
   weightBox,
   repsBox,
-  failOnConsoleErrors,
-} from './helpers';
+  failOnConsoleErrors, pickWorkout, progressTab } from './helpers';
 
 /**
  * "data" area: everything that has to still be there tomorrow — the backup
@@ -149,6 +148,7 @@ test('a backup round-trips a session, a body measurement and a supplement', asyn
   await expect(page.getByText('קריאטין').first()).toBeVisible();
   await expect(page.getByLabel('נלקח · לחץ לאיפוס')).toBeVisible();
   await page.goto('/#/progress');
+  await progressTab(page, 'יומן');
   await expect(page.getByText('Upper A').first()).toBeVisible();
 });
 
@@ -177,7 +177,7 @@ test('a JSON file that is not an Iron Track backup is refused, and wipes nothing
   await page.goto('/#/supplements');
   await expect(page.getByText('מגנזיום').first()).toBeVisible();
   await page.goto('/#/workout');
-  await expect(page.getByRole('button', { name: 'UA', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'החלף אימון' })).toContainText('UA');
 });
 
 test('a supplement with three daily doses tracks taken / skipped / pending, and the dashboard agrees', async ({ page }) => {
@@ -313,6 +313,7 @@ test('the plate calculator loads only plates the inventory says he owns, in pair
   await page.getByRole('button', { name: 'שמור', exact: true }).click();
 
   await weightBox(page, 1).fill('62.5');
+  await page.getByLabel(`עוד · ${BENCH} · סט 1`).click();
   await page.getByLabel(`חישוב פלטות · ${BENCH} · סט 1`).click();
   const calc = page.getByRole('dialog');
   await expect(page.getByText('פלטות בכל צד (מהגדולה לקטנה)')).toBeVisible();
@@ -330,6 +331,7 @@ test('the plate calculator loads only plates the inventory says he owns, in pair
 
   await openWorkout(page);
   await weightBox(page, 1).fill('62.5');
+  await page.getByLabel(`עוד · ${BENCH} · סט 1`).click();
   await page.getByLabel(`חישוב פלטות · ${BENCH} · סט 1`).click();
   const calc2 = page.getByRole('dialog');
   await expect(calc2).toContainText('80.00'); // 20 + 10 per side + 20 kg bar
@@ -385,7 +387,7 @@ test('an unfinished workout is inside the backup and comes back with it', async 
   await expect(page.getByText('המשך טיוטה')).toBeVisible();
   await expect(page.getByText('2/21 סטים')).toBeVisible();
   await page.goto('/#/workout');
-  await page.getByRole('button', { name: 'UA', exact: true }).click();
+  await pickWorkout(page, 'UA');
   await expect(weightBox(page, 1)).toHaveValue('60');
   await expect(repsBox(page, 2)).toHaveValue('4');
 });

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { failOnConsoleErrors, openWorkout, logSet, weightBox } from './helpers';
+import { failOnConsoleErrors, openWorkout, logSet, weightBox, pickWorkout } from './helpers';
 
 /**
  * Plan editor (/#/plan).
@@ -188,8 +188,10 @@ test('switching the active plan switches the program the logger and dashboard us
 
   // The logger must now offer the copy's workouts, not the original's.
   await page.goto('/#/workout');
-  await expect(page.getByRole('button', { name: 'ZZ', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'UA', exact: true })).toBeHidden();
+  await page.getByRole('button', { name: 'החלף אימון' }).click();
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'ZZ', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'UA', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
 
   await page.goto('/#/');
   // The hero card splits the workout name on the em dash — code and short name
@@ -322,8 +324,9 @@ test('adding workouts after deleting one produces no code or order collisions', 
 
   // The logger addresses workouts by code, so a collision there would be fatal.
   await page.goto('/#/workout');
+  await page.getByRole('button', { name: 'החלף אימון' }).click();
   for (const code of ['UA', 'LA', 'UB', 'LB', 'W5', 'W6']) {
-    await expect(page.getByRole('button', { name: code, exact: true })).toHaveCount(1);
+    await expect(page.getByRole('dialog').getByRole('button', { name: code, exact: true })).toHaveCount(1);
   }
 
   expect(errors).toEqual([]);
@@ -351,7 +354,10 @@ test('deleting a workout takes its muscle groups and exercises with it', async (
 
   // …and the deleted workout must not linger anywhere else.
   await page.goto('/#/workout');
-  await expect(page.getByRole('button', { name: 'UA', exact: true })).toBeHidden();
+  await page.getByRole('button', { name: 'החלף אימון' }).click();
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'UB', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'UA', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
   await page.goto('/#/');
   await expect(page.getByText('Upper A —')).toBeHidden();
 
@@ -404,7 +410,7 @@ test('an edit made in the plan is what the logger shows next time the workout is
   await expect(exerciseRow(page, 'Upper A', 'Lateral Raise')).toBeHidden();
 
   await page.goto('/#/workout');
-  await page.getByRole('button', { name: 'UA', exact: true }).click();
+  await pickWorkout(page, 'UA');
   await expect(page.getByRole('heading', { name: 'לחיצת חזה במוט' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Barbell Bench Press' })).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Lateral Raise' })).toBeHidden();
