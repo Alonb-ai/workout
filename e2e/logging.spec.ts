@@ -5,8 +5,7 @@ import {
   logSet,
   finishAndSave,
   weightBox,
-  repsBox,
-} from './helpers';
+  repsBox, pickWorkout, progressTab } from './helpers';
 
 test('a first session has nothing to prescribe and refuses to log an empty set', async ({ page }) => {
   await openWorkout(page);
@@ -24,7 +23,7 @@ test('logged sets survive a full page reload', async ({ page }) => {
   await expect(page.getByText(/טיוטה נשמרה|המשך טיוטה/).first()).toBeVisible();
 
   await page.reload();
-  await page.getByRole('button', { name: 'UA', exact: true }).click();
+  await pickWorkout(page, 'UA');
   await expect(weightBox(page, 1)).toHaveValue('60');
   await expect(repsBox(page, 1)).toHaveValue('5');
   await expect(page.getByText('המשך טיוטה')).toBeVisible();
@@ -89,6 +88,7 @@ test('a workout logged yesterday and never saved is rescued from the dashboard',
 
   // It landed in history under the date it was actually performed.
   await page.goto('/#/progress');
+  await progressTab(page, 'יומן');
   await expect(page.getByText('1 ביולי').first()).toBeVisible();
 });
 
@@ -101,7 +101,7 @@ test('a set logged immediately before a reload is not lost', async ({ page }) =>
   await expect(page.getByText('1 / 21 סטים')).toBeVisible();
   // No pause: the owner taps ✓ and the tab is reloaded or discarded a moment later.
   await page.reload();
-  await page.getByRole('button', { name: 'UA', exact: true }).click();
+  await pickWorkout(page, 'UA');
   await expect(weightBox(page, 1)).toHaveValue('60');
   await expect(repsBox(page, 1)).toHaveValue('5');
 });

@@ -13,7 +13,9 @@ import {
   IconTrophy,
   IconWarn,
   IconSort,
+  IconChevronDown,
 } from '@/components/Icon';
+import { cn } from '@/utils/cn';
 import { ExerciseCard, doneWorkSets } from './ExerciseCard';
 import { AddExerciseModal } from './AddExerciseModal';
 import { SwapExerciseModal } from './SwapExerciseModal';
@@ -134,6 +136,7 @@ export function WorkoutPage() {
   // Exercise order changed in this session (session-only; plan untouched).
   const [reordered, setReordered] = useState(false);
   const [reorderOpen, setReorderOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [scoreModalOpen, setScoreModalOpen] = useState(false);
   const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
   const [restoredFromDraft, setRestoredFromDraft] = useState(false);
@@ -477,59 +480,94 @@ export function WorkoutPage() {
 
   return (
     <div className="pt-3">
-      <header className="mb-3 flex items-end justify-between gap-3">
-        <div className="min-w-0">
+      {/* One compact row: what you are training, when, and a way to switch.
+          The A/B/C/D strip used to take a full row above the first set; it is
+          picked once per session, so it lives one tap away in a sheet. */}
+      <header className="mb-3 flex items-center gap-2">
+        <div className="min-w-0 flex-1">
           <p className="eyebrow">תיעוד אימון</p>
           <h1 className="text-xl font-extrabold truncate mt-0.5">
             {selectedWorkout?.name.split('—')[0]?.trim() ?? 'אימון'}
           </h1>
         </div>
-        {/* A real field, not a dashed underline. The native picker stays — it is
-            better than anything we would build, and it is the OS the user knows. */}
-        {/* The native picker indicator IS the calendar icon (tinted to the
-            accent in index.css) — a second one of our own was just clutter. */}
-        <label className="field shrink-0 flex items-center px-2.5 h-10 focus-within:border-accent/70">
+        {/* The native picker stays — it is better than anything we would build,
+            and it is the OS the user knows. Its indicator is tinted in index.css. */}
+        <label className="field shrink-0 flex items-center px-2 h-11 focus-within:border-accent/70">
           <input
             type="date"
-            className="bg-transparent num text-xs font-semibold text-fg outline-none w-[7.5rem]"
+            className="bg-transparent num text-xs font-semibold text-fg outline-none w-[6.9rem]"
             value={sessionDate}
             onChange={(e) => setSessionDate(e.target.value)}
             aria-label="תאריך האימון"
             max={format(new Date(), 'yyyy-MM-dd')}
           />
         </label>
+        <button
+          type="button"
+          className="btn-ghost shrink-0 !min-h-11 !px-3 text-sm font-bold"
+          onClick={() => setPickerOpen(true)}
+          aria-label="החלף אימון"
+        >
+          <span className="num text-accent-text">
+            {selectedWorkout?.isFreestyle ? 'חופשי' : (selectedWorkout?.code ?? '—')}
+          </span>
+          <IconChevronDown size={14} className="text-fg-dim" />
+        </button>
       </header>
 
-      {/* Workout tabs — a segmented control on one recessed track, so the strip
-          reads as a single switch instead of four loose buttons. */}
-      <div className="seg w-full mb-3 overflow-x-auto no-scrollbar">
-        {workouts
-          .filter((w) => !w.isFreestyle)
-          .map((w) => (
+      <Modal open={pickerOpen} onClose={() => setPickerOpen(false)} title="בחר אימון">
+        <ul className="space-y-2">
+          {workouts
+            .filter((w) => !w.isFreestyle)
+            .map((w) => (
+              <li key={w.id}>
+                <button
+                  type="button"
+                  aria-label={w.code}
+                  data-active={w.id === selectedWorkoutId}
+                  className={cn(
+                    'card-flat w-full min-h-14 px-3 flex items-center gap-3 text-right',
+                    w.id === selectedWorkoutId && 'border-accent/60 bg-accent-soft/40',
+                  )}
+                  onClick={() => {
+                    setSelectedWorkoutId(w.id);
+                    setPickerOpen(false);
+                  }}
+                >
+                  <span className="num-display text-lg text-accent-text w-10 shrink-0 text-center">
+                    {w.code}
+                  </span>
+                  <span className="flex-1 min-w-0 text-sm font-semibold truncate">{w.name}</span>
+                  {w.id === selectedWorkoutId && <IconCheck size={16} className="text-accent-text shrink-0" />}
+                </button>
+              </li>
+            ))}
+          {/* Off-plan training. The workout row is created on the first tap, so a
+              user who never trains freestyle never gets one in his plan. */}
+          <li>
             <button
-              key={w.id}
-              onClick={() => setSelectedWorkoutId(w.id)}
-              data-active={w.id === selectedWorkoutId}
-              className="pill-tab flex-1 !px-2"
-              title={w.name}
+              type="button"
+              aria-label="חופשי"
+              data-active={selectedWorkout?.isFreestyle === true}
+              className={cn(
+                'card-flat w-full min-h-14 px-3 flex items-center gap-3 text-right border-dashed',
+                selectedWorkout?.isFreestyle && 'border-accent/60 bg-accent-soft/40',
+              )}
+              onClick={async () => {
+                const fs = await ensureFreestyleWorkout(activePlan.id);
+                setSelectedWorkoutId(fs.id);
+                setPickerOpen(false);
+              }}
             >
-              {w.code}
+              <IconPlus size={18} className="text-accent-text w-10 shrink-0" />
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-semibold">אימון חופשי</span>
+                <span className="block text-2xs text-fg-dim">מתחיל ריק, מוסיפים תרגילים תוך כדי</span>
+              </span>
             </button>
-          ))}
-        {/* Off-plan training. The workout row is created on the first tap, so a
-            user who never trains freestyle never gets one in his plan. */}
-        <button
-          onClick={async () => {
-            const fs = await ensureFreestyleWorkout(activePlan.id);
-            setSelectedWorkoutId(fs.id);
-          }}
-          data-active={selectedWorkout?.isFreestyle === true}
-          className="pill-tab flex-1 !px-2"
-          title="אימון חופשי — מתחיל ריק, מוסיפים תרגילים תוך כדי"
-        >
-          חופשי
-        </button>
-      </div>
+          </li>
+        </ul>
+      </Modal>
 
       {/* Autosave / draft banner */}
       {lastSavedAt !== null && (
@@ -798,7 +836,7 @@ export function WorkoutPage() {
           setScoreModalOpen(false);
           setSaveResult(null);
           savingRef.current = false;
-          navigate('/progress');
+          navigate('/progress?tab=journal');
         }}
         title="האימון נשמר 🎉"
         footer={
@@ -808,7 +846,7 @@ export function WorkoutPage() {
               setScoreModalOpen(false);
               setSaveResult(null);
               savingRef.current = false;
-              navigate('/progress');
+              navigate('/progress?tab=journal');
             }}
           >
             עבור להתקדמות

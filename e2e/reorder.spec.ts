@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { BENCH, openWorkout, logSet, finishAndSave, tickButton, failOnConsoleErrors } from './helpers';
+import { BENCH, openWorkout, logSet, finishAndSave, tickButton, failOnConsoleErrors, pickWorkout } from './helpers';
 
 /**
  * Reordering exercises mid-workout (owner, 23.11.2026: "I can't change the
@@ -66,7 +66,7 @@ test('an exercise moved into the workout in the plan mid-session shows up at its
   const errors = failOnConsoleErrors(page);
   const PULLUP = 'Weighted Pull-up';
   await page.goto('/#/workout');
-  await page.getByRole('button', { name: 'UB', exact: true }).click();
+  await pickWorkout(page, 'UB');
   await expect(card(page, PULLUP)).toBeVisible();
   await logSet(page, 1, '10', '5', PULLUP);
   await page.waitForTimeout(700);
@@ -83,7 +83,7 @@ test('an exercise moved into the workout in the plan mid-session shows up at its
   await expect(page.getByText(/הועבר ל/)).toBeVisible();
 
   await page.goto('/#/workout');
-  await page.getByRole('button', { name: 'UB', exact: true }).click();
+  await pickWorkout(page, 'UB');
   await expect(page.getByText('נוסף מהתכנית: Lateral Raise')).toBeVisible();
   const names = await order(page);
   // Filed into the first muscle group, so it lands with that group, not last.

@@ -136,7 +136,7 @@ export function SessionDetailPage() {
   if (!session) {
     return (
       <div className="pt-6">
-        <Link to="/progress" className="btn-subtle"><IconArrowRight /> חזרה</Link>
+        <Link to="/progress?tab=journal" className="btn-subtle"><IconArrowRight /> חזרה</Link>
         <p className="text-fg-muted text-center mt-6">האימון לא נמצא.</p>
       </div>
     );
@@ -164,12 +164,12 @@ export function SessionDetailPage() {
     });
     await recomputeAfter({ date: session.date, startedAt: 0 });
     toast.success('האימון נמחק');
-    navigate('/progress', { replace: true });
+    navigate('/progress?tab=journal', { replace: true });
   };
 
   return (
     <div className="pt-3">
-      <Link to="/progress" className="btn-subtle !min-h-9 !px-2 text-xs mb-2 inline-flex">
+      <Link to="/progress?tab=journal" className="btn-subtle !min-h-11 !px-2 text-xs mb-2 inline-flex">
         <IconArrowRight size={14} /> חזרה ליומן
       </Link>
 

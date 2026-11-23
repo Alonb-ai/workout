@@ -26,9 +26,17 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** Switch the logger to a workout ("חופשי" for freestyle) via the header's
+ *  "החלף אימון" sheet. */
+export async function pickWorkout(page: Page, code: string) {
+  await page.getByRole('button', { name: 'החלף אימון' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: code, exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+}
+
 export async function openWorkout(page: Page, code = 'UA', firstExercise = BENCH) {
   await page.goto('/#/workout');
-  await page.getByRole('button', { name: code, exact: true }).click();
+  await pickWorkout(page, code);
   await expect(page.getByRole('heading', { name: firstExercise })).toBeVisible();
 }
 
@@ -53,6 +61,11 @@ export async function finishAndSave(page: Page) {
   await page.getByRole('button', { name: 'שמור אימון' }).click();
   await expect(page.getByText('האימון נשמר')).toBeVisible();
   await page.getByRole('button', { name: 'עבור להתקדמות' }).click();
+}
+
+/** Progress screen tab: 'סקירה' | 'תרגילים' | 'יומן'. */
+export async function progressTab(page: Page, name: 'סקירה' | 'תרגילים' | 'יומן') {
+  await page.getByRole('tablist', { name: 'תצוגה' }).getByRole('tab', { name, exact: true }).click();
 }
 
 /** Fail the test if the app logged anything to console.error during the run. */

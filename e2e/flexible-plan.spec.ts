@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { BENCH, failOnConsoleErrors, finishAndSave, logSet, openWorkout, weightBox } from './helpers';
+import { BENCH, failOnConsoleErrors, finishAndSave, logSet, openWorkout, weightBox, pickWorkout } from './helpers';
 
 /**
  * The plan bends without losing history: an exercise can be swapped for one
@@ -47,7 +47,7 @@ test('a session-only swap survives a reload and leaves the plan alone', async ({
 
   await logSet(page, 1, '7.5', '12', NEW);
   await page.reload();
-  await page.getByRole('button', { name: 'UA', exact: true }).click();
+  await pickWorkout(page, 'UA');
   await expect(weightBox(page, 1, NEW)).toHaveValue('7.5');
   // The removed plan exercise must not sneak back in on restore.
   await expect(page.getByRole('heading', { name: 'Lateral Raise' })).toHaveCount(0);
@@ -84,7 +84,7 @@ test('removing an exercise from the plan keeps its history, and restoring it res
 
   // Gone from the next session…
   await page.goto('/#/workout');
-  await page.getByRole('button', { name: 'UA', exact: true }).click();
+  await pickWorkout(page, 'UA');
   await expect(page.getByRole('heading', { name: 'Incline DB Press' })).toBeVisible();
   await expect(page.getByRole('heading', { name: BENCH })).toHaveCount(0);
 
@@ -138,9 +138,9 @@ test('an exercise can be moved to another workout, history and all', async ({ pa
   await expect(page.getByText(/הועבר ל/)).toBeVisible();
 
   await page.goto('/#/workout');
-  await page.getByRole('button', { name: 'UB', exact: true }).click();
+  await pickWorkout(page, 'UB');
   await expect(card(page, 'Lateral Raise').getByText('10×12')).toBeVisible();
-  await page.getByRole('button', { name: 'UA', exact: true }).click();
+  await pickWorkout(page, 'UA');
   await expect(page.getByRole('heading', { name: BENCH })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Lateral Raise' })).toHaveCount(0);
   expect(errors).toEqual([]);

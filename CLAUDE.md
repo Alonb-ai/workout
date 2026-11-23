@@ -298,7 +298,11 @@ RPE / delete (an RPE already set keeps that strip open). A card whose every set
 was ticked *in this sitting* folds to a summary line and scrolls the next card
 up; unticking or tapping the line opens it. ✓ fires `hapticTap` (`native/haptics.ts`,
 @capacitor/haptics in the app, `navigator.vibrate` on the web). Sheets (`Modal`)
-spring in and dismiss by dragging the header down. UI/UX skills for this work
+spring in and dismiss by dragging the header down. The logger header is one row
+(name, date, "החלף אימון" → a sheet of workout buttons named by code; E2E uses
+`pickWorkout`). Progress has three tabs kept in `?tab=` (סקירה / תרגילים / יומן;
+saving a workout and "חזרה ליומן" open `?tab=journal`; E2E uses `progressTab`),
+and the journal pages 12 at a time. UI/UX skills for this work
 live in `.claude/skills` (web-design-guidelines, apple-design, ui-ux-pro-max, hig-*).
 
 **Accessible names are an API.** 51 Playwright tests find controls by their
