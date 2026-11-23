@@ -162,9 +162,11 @@
     @apply bg-accent text-ink-950 border-accent shadow-accent-lift;
   }
   .safe-top { padding-top: calc(0.5rem + var(--safe-top)); }
-  .pb-tabbar { padding-bottom: calc(72px + var(--safe-bottom)); }
+  /* --dock-h is the workout dock's height while the logger is mounted (0
+     elsewhere): the dock floats above the tab bar, so content reserves it too. */
+  .pb-tabbar { padding-bottom: calc(72px + var(--dock-h, 0px) + var(--safe-bottom)); }
   /* Tab bar + the floating rest timer bar above it. */
-  .pb-tabbar-timer { padding-bottom: calc(140px + var(--safe-bottom)); }
+  .pb-tabbar-timer { padding-bottom: calc(140px + var(--dock-h, 0px) + var(--safe-bottom)); }
 }
 
 /* Recharts text in RTL */

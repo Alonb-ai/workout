@@ -64,6 +64,12 @@ export function DashboardPage() {
 
   const supplements = useTodaySupplements();
   const stalls = useStallFlags();
+  // Folded to one line by default: three full warning cards pushed today's
+  // supplements and body stats off the first screen.
+  const [stallsOpen, setStallsOpen] = useState(false);
+  const visibleStalls = stalls
+    .filter((x) => settings.dismissedStalls[x.exerciseId] !== x.lastThreeSessionIds[2])
+    .slice(0, 3);
   const drafts = useLiveQuery(
     async () => (await db.workoutDrafts.toArray()).sort((a, b) => b.updatedAt - a.updatedAt),
     [],
@@ -297,100 +303,6 @@ export function DashboardPage() {
         </motion.div>
       )}
 
-      {/* Quick stats */}
-      <Section
-        title="סטטיסטיקות"
-        action={
-          <Link to="/progress/week" className="text-xs text-accent-text font-semibold">
-            סיכום שבועי ←
-          </Link>
-        }
-      >
-        <div className="grid grid-cols-2 gap-2">
-          <Stat
-            icon={<IconFlame className="text-accent" />}
-            label="מאז אימון"
-            value={daysSince === null ? '—' : daysSince === 0 ? 'היום' : String(daysSince)}
-            sub={daysSince === null ? 'עוד לא התאמנת' : daysSince === 0 ? 'כל הכבוד' : 'ימים'}
-          />
-          <Stat icon={<IconCalendar className="text-info" />} label="החודש" value={String(sessionsThisMonth)} sub="אימונים" />
-          <Stat
-            icon={<IconChart className="text-good" />}
-            label="נפח שבועי"
-            value={weeklyVolume === 0 ? '—' : `${weeklyVolume.toLocaleString('he-IL')}`}
-            sub="ק״ג × חזרות"
-          />
-          {/* Was rendering the raw ISO date ("2026-07-23") as a display figure. */}
-          <Stat
-            icon={<IconTrophy className="text-warn" />}
-            label="שיא אחרון"
-            value={recentPR ? String(recentPR.count) : '—'}
-            sub={recentPR ? `שיאים · ${formatHebDate(recentPR.date)}` : 'אין עדיין'}
-          />
-        </div>
-      </Section>
-
-      {/* Stall flags */}
-      {stalls.length > 0 && (
-        <Section
-          title="המלצות התקדמות"
-          description="אזורים שתקועים ב-3 אימונים האחרונים"
-        >
-          <ul className="space-y-2">
-            {stalls.slice(0, 3).map((s) => {
-              const dismissed = settings.dismissedStalls[s.exerciseId];
-              if (dismissed === s.lastThreeSessionIds[2]) return null;
-              return (
-                <li key={s.exerciseId} className="card p-3 flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-warn-soft text-warn flex items-center justify-center shrink-0">
-                    <IconWarn />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold truncate">{s.exerciseName}</p>
-                    <p className="text-xs text-fg-muted">{s.reason}</p>
-                    {s.deload && (
-                      <p className="text-xs mt-1">
-                        <span className="text-fg-muted">דה-לוד: </span>
-                        <span className="num">
-                          {s.deload.fromKg.toFixed(1)} → {s.deload.toKg.toFixed(1)} kg
-                        </span>
-                        <span className="text-fg-muted"> (–{s.deload.pct}%)</span>
-                      </p>
-                    )}
-                    {s.substitutes && s.substitutes.length > 0 && (
-                      <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                        <span className="text-2xs text-fg-muted shrink-0">או החלף ל:</span>
-                        {s.substitutes.slice(0, 2).map((sub) => (
-                          <span
-                            key={sub.id}
-                            className="chip border-info/40 text-info bg-info-soft truncate max-w-[10rem]"
-                          >
-                            {sub.name}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    className="btn-subtle !min-h-9 !px-2 text-xs"
-                    onClick={() =>
-                      updateSettings({
-                        dismissedStalls: {
-                          ...settings.dismissedStalls,
-                          [s.exerciseId]: s.lastThreeSessionIds[2] ?? '',
-                        },
-                      })
-                    }
-                  >
-                    סגור
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </Section>
-      )}
-
       {/* Today's supplements */}
       <Section
         title="תוספים להיום"
@@ -443,6 +355,115 @@ export function DashboardPage() {
       </Section>
 
       {/* Body measurement chip — surfaces the last weigh-in or nudges first entry */}
+      {/* Quick stats */}
+      <Section
+        title="סטטיסטיקות"
+        action={
+          <Link to="/progress/week" className="text-xs text-accent-text font-semibold">
+            סיכום שבועי ←
+          </Link>
+        }
+      >
+        <div className="grid grid-cols-4 gap-1.5">
+          <Stat
+            icon={<IconFlame className="text-accent" />}
+            label="מאז אימון"
+            value={daysSince === null ? '—' : daysSince === 0 ? 'היום' : String(daysSince)}
+            sub={daysSince === null ? 'עוד לא התאמנת' : daysSince === 0 ? 'כל הכבוד' : 'ימים'}
+          />
+          <Stat icon={<IconCalendar className="text-info" />} label="החודש" value={String(sessionsThisMonth)} sub="אימונים" />
+          <Stat
+            icon={<IconChart className="text-good" />}
+            label="נפח שבועי"
+            value={weeklyVolume === 0 ? '—' : `${weeklyVolume.toLocaleString('he-IL')}`}
+            sub="ק״ג × חזרות"
+          />
+          {/* Was rendering the raw ISO date ("2026-07-23") as a display figure. */}
+          <Stat
+            icon={<IconTrophy className="text-warn" />}
+            label="שיא אחרון"
+            value={recentPR ? String(recentPR.count) : '—'}
+            sub={recentPR ? `שיאים · ${formatHebDate(recentPR.date)}` : 'אין עדיין'}
+          />
+        </div>
+      </Section>
+
+      {/* Stall flags */}
+      {visibleStalls.length > 0 && (
+        <Section
+          title="המלצות התקדמות"
+          description="אזורים שתקועים ב-3 אימונים האחרונים"
+        >
+          <button
+            type="button"
+            className="card w-full min-h-12 px-3 py-2.5 flex items-center gap-3 text-right relative overflow-hidden bg-warn/[0.06]"
+            onClick={() => setStallsOpen((v) => !v)}
+            aria-expanded={stallsOpen}
+          >
+            <span className="absolute inset-y-0 start-0 w-[3px] bg-warn" aria-hidden />
+            <IconWarn className="text-warn shrink-0" size={18} />
+            <span className="flex-1 min-w-0 text-sm font-semibold truncate">
+              {visibleStalls.length === 1
+                ? `${visibleStalls[0]!.exerciseName} תקוע`
+                : `${visibleStalls.length} תרגילים תקועים`}
+            </span>
+            <span className="text-xs text-fg-muted shrink-0">{stallsOpen ? 'הסתר' : 'הצג'}</span>
+          </button>
+          {stallsOpen && (
+          <ul className="space-y-2 mt-2">
+            {visibleStalls.map((s) => {
+              return (
+                <li key={s.exerciseId} className="card p-3 flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-warn-soft text-warn flex items-center justify-center shrink-0">
+                    <IconWarn />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold truncate">{s.exerciseName}</p>
+                    <p className="text-xs text-fg-muted">{s.reason}</p>
+                    {s.deload && (
+                      <p className="text-xs mt-1">
+                        <span className="text-fg-muted">דה-לוד: </span>
+                        <span className="num">
+                          {s.deload.fromKg.toFixed(1)} → {s.deload.toKg.toFixed(1)} kg
+                        </span>
+                        <span className="text-fg-muted"> (–{s.deload.pct}%)</span>
+                      </p>
+                    )}
+                    {s.substitutes && s.substitutes.length > 0 && (
+                      <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                        <span className="text-2xs text-fg-muted shrink-0">או החלף ל:</span>
+                        {s.substitutes.slice(0, 2).map((sub) => (
+                          <span
+                            key={sub.id}
+                            className="chip border-info/40 text-info bg-info-soft truncate max-w-[10rem]"
+                          >
+                            {sub.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className="btn-subtle !min-h-9 !px-2 text-xs"
+                    onClick={() =>
+                      updateSettings({
+                        dismissedStalls: {
+                          ...settings.dismissedStalls,
+                          [s.exerciseId]: s.lastThreeSessionIds[2] ?? '',
+                        },
+                      })
+                    }
+                  >
+                    סגור
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          )}
+        </Section>
+      )}
+
       <Section title="גוף">
         <Link
           to="/body"
@@ -498,15 +519,15 @@ function Stat({
   sub: string;
 }) {
   return (
-    <div className="card p-3">
-      <div className="flex items-center gap-2">
-        <span className="w-6 h-6 rounded-lg bg-ink-800 border border-line-muted flex items-center justify-center [&>svg]:w-3.5 [&>svg]:h-3.5">
-          {icon}
-        </span>
-        <span className="eyebrow truncate">{label}</span>
-      </div>
-      <p className="num-display text-2xl mt-2 leading-none">{value}</p>
-      <p className="text-2xs text-fg-dim mt-1 truncate">{sub}</p>
+    // Four across in one row: a glance, not a screenful. The hero card above
+    // is what the screen is for; these are context.
+    <div className="card px-2 py-2.5 min-w-0 text-center">
+      <span className="mx-auto w-6 h-6 rounded-lg bg-ink-800 border border-line-muted flex items-center justify-center [&>svg]:w-3.5 [&>svg]:h-3.5">
+        {icon}
+      </span>
+      <p className="num-display text-lg mt-1.5 leading-none truncate">{value}</p>
+      <p className="text-2xs text-fg-muted mt-1 truncate">{label}</p>
+      <p className="text-2xs text-fg-dim truncate">{sub}</p>
     </div>
   );
 }

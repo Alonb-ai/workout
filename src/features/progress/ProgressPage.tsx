@@ -116,6 +116,8 @@ function SessionChange({ pct }: { pct: number }) {
   );
 }
 
+const JOURNAL_PAGE = 12;
+
 export function ProgressPage() {
   const sessions =
     useLiveQuery(() => db.sessions.filter((s) => s.status === 'completed').toArray(), []) ?? [];
@@ -201,9 +203,12 @@ export function ProgressPage() {
   const maxMuscleVol = volumeByMuscle?.[0]?.vol ?? 0;
 
   // Journal grouped by month — a flat list of 60 rows has no landmarks.
+  // The journal held every session ever — 16 screens of scroll on a phone.
+  // Newest first, a page at a time.
+  const [journalLimit, setJournalLimit] = useState(JOURNAL_PAGE);
   const months = useMemo(() => {
     const out: { key: string; label: string; items: typeof sorted }[] = [];
-    for (const s of sorted) {
+    for (const s of sorted.slice(0, journalLimit)) {
       const key = s.date.slice(0, 7);
       const last = out[out.length - 1];
       if (last && last.key === key) last.items.push(s);
@@ -215,7 +220,7 @@ export function ProgressPage() {
         });
     }
     return out;
-  }, [sorted]);
+  }, [sorted, journalLimit]);
 
   return (
     <div className="pt-3">
@@ -434,6 +439,15 @@ export function ProgressPage() {
                   </ul>
                 </div>
               ))}
+              {sorted.length > journalLimit && (
+                <button
+                  type="button"
+                  className="btn-ghost w-full !min-h-11 text-sm"
+                  onClick={() => setJournalLimit((n) => n + JOURNAL_PAGE)}
+                >
+                  הצג עוד ({sorted.length - journalLimit})
+                </button>
+              )}
             </div>
           </Section>
         </>

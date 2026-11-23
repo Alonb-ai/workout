@@ -34,7 +34,7 @@ import { toast } from '@/store/toast';
 import { confirmDialog } from '@/components/Confirm';
 import { useStallFlags } from '../dashboard/useStallFlags';
 import { useTimerStore } from '@/store/timer';
-import { WorkoutClock } from './WorkoutClock';
+import { WorkoutDock } from './WorkoutDock';
 import { motion, AnimatePresence } from 'framer-motion';
 
 /** Has the user typed/marked anything meaningful that's worth persisting? */
@@ -553,31 +553,15 @@ export function WorkoutPage() {
         </div>
       )}
 
-      {/* Progress + finish. Two rows rather than three things elbowing each
-          other in one: the count and the action on top, the bar spanning the
-          full width beneath it where it can actually be read at a glance. */}
-      <div className="card px-3 py-2.5 mb-3 space-y-2">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="eyebrow">התקדמות אימון</p>
-            <p className="num-display text-lg leading-tight mt-0.5">
-              {completedCount} / {plannedCount} סטים
-            </p>
-            <WorkoutClock drafts={drafts} getStartedAt={() => startedAtRef.current} />
-          </div>
-          <button className="btn-primary !min-h-10 !px-3.5 text-xs shrink-0" onClick={onAttemptSave}>
-            <IconCheck size={15} /> סיים ושמור
-          </button>
-        </div>
-        <div className="h-1.5 rounded-full bg-ink-950 overflow-hidden shadow-field">
-          <div
-            className="h-full rounded-full bg-gradient-to-l from-accent to-accent-hover transition-[width] duration-500 ease-out"
-            style={{
-              width: `${plannedCount === 0 ? 0 : (completedCount / plannedCount) * 100}%`,
-            }}
-          />
-        </div>
-      </div>
+      {/* Progress + Finish & Save live in the dock above the tab bar — in
+          thumb reach, and in view however far down the list the user is. */}
+      <WorkoutDock
+        completed={completedCount}
+        planned={plannedCount}
+        drafts={drafts}
+        getStartedAt={() => startedAtRef.current}
+        onFinish={onAttemptSave}
+      />
 
       {/* Show the loader whenever we're loading — also when switching between
           workout tabs — so the previous workout's drafts don't flash in until

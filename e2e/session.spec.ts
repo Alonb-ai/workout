@@ -33,6 +33,10 @@ const setRows = (page: Page, exercise = BENCH) =>
 const removeSetButton = (page: Page, set: number, exercise = BENCH) =>
   page.getByLabel(`מחק · ${exercise} · סט ${set}`);
 
+/** The row's ⋯ — plate calc, RPE and delete sit behind it. */
+const rowMore = (page: Page, set: number, exercise = BENCH) =>
+  page.getByLabel(`עוד · ${exercise} · סט ${set}`);
+
 const rpeChip = (page: Page, set: number, exercise = BENCH) =>
   page.getByLabel(`ערוך RPE · ${exercise} · סט ${set}`);
 
@@ -87,6 +91,7 @@ test('an extra set and a deleted set both survive backgrounding + reload', async
   await logSet(page, 3, '65', '3');
 
   // Row 2 was a mis-tap — delete it. Rows renumber and the values shift up.
+  await rowMore(page, 2).click();
   await removeSetButton(page, 2).click();
   await expect(setRows(page)).toHaveCount(5);
   await expect(weightBox(page, 2)).toHaveValue('65');
@@ -313,10 +318,11 @@ test('ticking a set starts the named rest timer, and RPE is kept per set', async
   await expect(restBar(page)).toContainText(BENCH);
   await expect(restBar(page)).toContainText(/[0-9]:[0-9]{2}/);
 
+  await rowMore(page, 1).click();
   await rpeChip(page, 1).click();
   await page.getByLabel('RPE', { exact: true }).fill('8.5');
   await expect(rpeChip(page, 1)).toHaveText('R8.5');
-  await expect(rpeChip(page, 2)).toHaveText('RPE'); // and it stays on its own row
+  await expect(rpeChip(page, 2)).toHaveCount(0); // and it stays on its own row
 
   await page.getByRole('button', { name: 'דלג' }).click();
   await expect(page.getByRole('button', { name: 'דלג' })).toHaveCount(0);

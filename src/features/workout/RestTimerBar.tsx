@@ -158,7 +158,8 @@ export function GlobalRestTimerBar() {
           exit={{ y: 60, opacity: 0 }}
           transition={{ type: 'spring', stiffness: 380, damping: 32 }}
           className="fixed left-0 right-0 z-30 pointer-events-none"
-          style={{ bottom: 'calc(60px + env(safe-area-inset-bottom))' }}
+          // Sits above the workout dock when the logger is open (--dock-h).
+          style={{ bottom: 'calc(60px + var(--dock-h, 0px) + env(safe-area-inset-bottom))' }}
         >
           <div className="max-w-2xl mx-auto px-3">
             {/* Read from two metres away, between sets: the remaining time is the

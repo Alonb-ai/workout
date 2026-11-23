@@ -313,6 +313,7 @@ test('the plate calculator loads only plates the inventory says he owns, in pair
   await page.getByRole('button', { name: 'שמור', exact: true }).click();
 
   await weightBox(page, 1).fill('62.5');
+  await page.getByLabel(`עוד · ${BENCH} · סט 1`).click();
   await page.getByLabel(`חישוב פלטות · ${BENCH} · סט 1`).click();
   const calc = page.getByRole('dialog');
   await expect(page.getByText('פלטות בכל צד (מהגדולה לקטנה)')).toBeVisible();
@@ -330,6 +331,7 @@ test('the plate calculator loads only plates the inventory says he owns, in pair
 
   await openWorkout(page);
   await weightBox(page, 1).fill('62.5');
+  await page.getByLabel(`עוד · ${BENCH} · סט 1`).click();
   await page.getByLabel(`חישוב פלטות · ${BENCH} · סט 1`).click();
   const calc2 = page.getByRole('dialog');
   await expect(calc2).toContainText('80.00'); // 20 + 10 per side + 20 kg bar
